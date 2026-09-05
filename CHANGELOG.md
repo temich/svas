@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/temich/svas/compare/v2.0.0...v2.0.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **package:** the svelte peer range says which major it is ([e17b1be](https://github.com/temich/svas/commit/e17b1be415b1257fe9e1ae712677b13cd96459e6))
+
 # [2.0.0](https://github.com/temich/svas/compare/v1.7.1...v2.0.0) (2026-09-05)
 
 
