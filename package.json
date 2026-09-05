@@ -30,7 +30,7 @@
 	"peerDependencies": {
 		"@lucide/svelte": "*",
 		"@sveltejs/kit": "*",
-		"svelte": "*"
+		"svelte": "^5.0.0"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.0",
