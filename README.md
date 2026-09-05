@@ -260,13 +260,13 @@ const both = combined(user, settings)
 
 ### `sync(store, item, options?)`
 
-Merges a versioned item into a `Collection` or `Value` based on `_version`, and optionally deletes when `_deleted` is set. Useful for applying server events.
+Merges a versioned item into a `Collection` or `Value` based on `VERSION`, and optionally deletes when `DELETED` is set. Useful for applying server events.
 
 ```ts
 interface Comparable {
   id: string
-  _version: number
-  _deleted?: number | null
+  VERSION: number
+  DELETED?: number | null
 }
 ```
 
