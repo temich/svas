@@ -1,3 +1,16 @@
+# [2.0.0](https://github.com/temich/svas/compare/v1.7.1...v2.0.0) (2026-09-05)
+
+
+* feat!: `sync` compares the system properties by their new names ([bc47bde](https://github.com/temich/svas/commit/bc47bdeb9a4401423cb118134306a5a5e6f0b9bf))
+
+
+### BREAKING CHANGES
+
+* an item passed to `sync` carries `VERSION` and `DELETED`
+rather than `_version` and `_deleted`.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
 ## [1.7.1](https://github.com/temich/svas/compare/v1.7.0...v1.7.1) (2026-04-14)
 
 
