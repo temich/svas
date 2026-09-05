@@ -17,7 +17,7 @@ function syncCollection<T extends Comparable>(
   tobe: T,
   options?: Options
 ) {
-  if (tobe._deleted !== null && tobe._deleted !== undefined && options?.delete !== false) {
+  if (tobe.DELETED !== null && tobe.DELETED !== undefined && options?.delete !== false) {
     collection.delete(tobe.id)
 
     return
@@ -26,7 +26,7 @@ function syncCollection<T extends Comparable>(
   const asis = collection.extract(tobe.id)
 
   if (asis === null) collection.add(tobe)
-  else if (asis._version < tobe._version) collection.set(tobe, { add: true, ...options })
+  else if (asis.VERSION < tobe.VERSION) collection.set(tobe, { add: true, ...options })
 }
 
 function syncValue<T extends Comparable>(
@@ -36,15 +36,15 @@ function syncValue<T extends Comparable>(
   const asis = value.extract()
 
   if (asis === null) value.set(tobe)
-  else if (asis._version < tobe._version) value.set(tobe)
+  else if (asis.VERSION < tobe.VERSION) value.set(tobe)
 }
 
 interface Comparable extends Identifiable {
-  _version: number
-  _deleted?: number | null
+  VERSION: number
+  DELETED?: number | null
 }
 
 interface Options extends SetOptions {
-  /** Whether to delete the item `_deleted` is set. Defaults to `true`. */
+  /** Whether to delete the item `DELETED` is set. Defaults to `true`. */
   delete?: boolean
 }
