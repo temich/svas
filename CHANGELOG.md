@@ -1,3 +1,16 @@
+# [3.0.0](https://github.com/temich/svas/compare/v2.0.1...v3.0.0) (2026-09-18)
+
+
+* feat!: `Async` shows nothing while loading, unless the app says what ([238068f](https://github.com/temich/svas/commit/238068f7ded720f5da4e975be02d1739ab5455b5))
+
+
+### BREAKING CHANGES
+
+* `Async` renders nothing while the store has no value and no `waiting`
+snippet is given. @lucide/svelte is no longer a peer dependency.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
 ## [2.0.1](https://github.com/temich/svas/compare/v2.0.0...v2.0.1) (2026-09-05)
 
 
