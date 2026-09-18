@@ -279,7 +279,9 @@ sync(todos, incoming, { delete: false }) // ignore tombstones
 
 ### `Async`
 
-Svelte component for rendering a `Maybe` store with `loading`, `error`, and default slots.
+Svelte component for rendering a `Maybe` store with `waiting`, `error`, and `awaited` snippets.
+
+While the store has no value, `Async` renders `waiting`, and nothing where it is not given: what loading looks like is the app's to declare. An error it renders with `error`, or a default message with a reload button — nothing, with `silent`.
 
 ```svelte
 <script lang="ts">

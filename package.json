@@ -28,7 +28,6 @@
 		}
 	},
 	"peerDependencies": {
-		"@lucide/svelte": "*",
 		"@sveltejs/kit": "*",
 		"svelte": "^5.0.0"
 	},
