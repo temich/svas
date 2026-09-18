@@ -124,12 +124,12 @@ await once(store, (v) => v === 'ready')   // first value satisfying a condition
     <!-- here todos are T[] -->
     {#each todos as t}<Row {t} />{/each}
   {/snippet}
-  {#snippet waiting()}<Spinner />{/snippet}   <!-- optional; default loader otherwise -->
+  {#snippet waiting()}<Spinner />{/snippet}   <!-- optional; nothing is shown while loading otherwise -->
   {#snippet error(e)}<Err {e} />{/snippet}    <!-- optional; default error UI otherwise -->
 </Async>
 ```
 
-Props: `store` (required), `awaited` snippet (required), optional `waiting` / `error` snippets, `silent` (suppress default loader/error chrome). Combine with `combined` to await several at once.
+Props: `store` (required), `awaited` snippet (required), optional `waiting` / `error` snippets, `silent` (suppress the default error UI). Combine with `combined` to await several at once.
 
 ### `combined(...stores)`
 
