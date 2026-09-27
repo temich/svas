@@ -176,7 +176,7 @@ For a collection a server streams with tokens (a toa stream route): read once, t
 ```ts
 const pots = reflection<Pot>({
   name: 'pots',                                        // IndexedDB `svas:pots`
-  stream: (token) => net.stream('/pots/stream/', token), // parts; `expired` on 410
+  stream: (token) => net.stream('/pots/stream/', token), // parts, or `expired` where the server answers 410
   get: (id) => net.pot(id),                            // optional: entries outside the copy
   indexes: { type: 'type' },
   bind: account
@@ -184,6 +184,7 @@ const pots = reflection<Pot>({
 
 pots.query('type', 'green')        // Readable<Maybe<Pot[]>>, null until the copy is whole
 pots.get(id)                       // Readable<Maybe<Pot>>
+await pots.apply(created)          // the state a write answered, without reading it
 events.on('pots.changed', () => pots.sync())
 await pots.empty()                 // on registration, before subscribing: [] and no read
 ```
