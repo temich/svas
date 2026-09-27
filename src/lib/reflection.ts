@@ -79,6 +79,22 @@ export class Reflection<T extends Versioned> {
   }
 
   /**
+   * Says the collection is empty, as it is for an account just made: queries answer `[]`, and
+   * nothing is read until `sync`. Called before anything subscribes, it saves the first read.
+   */
+  public async empty(): Promise<void> {
+    this.started = true
+
+    const db = await this.db()
+
+    if (db === null) return
+
+    await db.clear({ ...db.meta, token: undefined, complete: true })
+    await this.changed({ all: true })
+    this.broadcast({ all: true })
+  }
+
+  /**
    * Reads what is left to read: the rest of the collection, then what changed in it. One tab
    * reads at a time; the others learn what it read.
    */
@@ -109,7 +125,7 @@ export class Reflection<T extends Versioned> {
 
     this.started = true
 
-    if (this.options.empty !== true) void this.sync()
+    void this.sync()
   }
 
   private async locked(): Promise<Error | null> {
@@ -172,7 +188,7 @@ export class Reflection<T extends Versioned> {
   private async db(): Promise<Database | null> {
     if (!available()) return null
 
-    this.database ??= open(this.options.name, this.indexes, this.options.empty === true)
+    this.database ??= open(this.options.name, this.indexes)
 
     return await this.database
   }
@@ -279,9 +295,6 @@ export interface Options<T> {
 
   /** Indexes by name: a property of the entry, or a list of them. */
   indexes?: Indexes
-
-  /** Whether the collection is known to be empty, as for a new account: nothing is read until `sync`. */
-  empty?: boolean
 
   /** Deletes the copy when the bound store is `null`. */
   bind?: Readable<unknown | null>

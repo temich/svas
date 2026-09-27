@@ -179,11 +179,11 @@ const pots = reflection<Pot>({
   stream: (token) => net.stream('/pots/stream/', token), // parts; `expired` on 410
   get: (id) => net.pot(id),                            // optional: entries outside the copy
   indexes: { type: 'type' },
-  empty: isNewAccount,                                 // optional: answer [] and read nothing yet
   bind: account
 })
 
 pots.query('type', 'green')        // Readable<Maybe<Pot[]>>, null until the copy is whole
 pots.get(id)                       // Readable<Maybe<Pot>>
 events.on('pots.changed', () => pots.sync())
+await pots.empty()                 // on registration, before subscribing: [] and no read
 ```

@@ -28,7 +28,7 @@ const KEY = 'meta'
  * deleted and made again: a copy can always be read again, and an index cannot be added to one
  * without a version of its own.
  */
-export async function open(name: string, indexes: Indexes, empty: boolean): Promise<Database> {
+export async function open(name: string, indexes: Indexes): Promise<Database> {
   const declaration = JSON.stringify(indexes)
   let db = await connect(name, indexes)
   let meta = await read<Meta>(db, META, KEY)
@@ -41,7 +41,7 @@ export async function open(name: string, indexes: Indexes, empty: boolean): Prom
   }
 
   if (meta === undefined) {
-    meta = { complete: empty, generation: 0, declaration }
+    meta = { complete: false, generation: 0, declaration }
     await write(db, META, meta, KEY)
   }
 

@@ -155,7 +155,9 @@ describe('reflection', () => {
 			T1: [{ token: 'T2' }]
 		})
 
-		const pots = reflection<Pot>({ name: db, stream, empty: true })
+		const pots = reflection<Pot>({ name: db, stream })
+
+		await pots.empty()
 
 		expect(await next(pots.query('id'))).toEqual([])
 		expect(asked).toEqual([])
@@ -166,6 +168,21 @@ describe('reflection', () => {
 		await pots.sync()
 
 		expect(ids(await read)).toEqual(['a'])
+	})
+
+	it('should read on the next start after the collection was said to be empty', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1' }],
+			T1: [{ token: 'T2' }]
+		})
+
+		await reflection<Pot>({ name: db, stream }).empty()
+
+		const later = reflection<Pot>({ name: db, stream })
+		const all = next(later.query('id'), (value) => Array.isArray(value) && value.length === 1)
+
+		expect(ids(await all)).toEqual(['a'])
+		expect(asked[0]).toBeUndefined()
 	})
 
 	it('should answer null until the copy holds the whole collection', async () => {
@@ -294,9 +311,11 @@ describe('reflection', () => {
 
 		account.set(null)
 
-		const again = reflection<Pot>({ name: db, stream: async () => expired, empty: true })
-
 		await new Promise((resolve) => setTimeout(resolve, 10))
+
+		const again = reflection<Pot>({ name: db, stream: async () => expired })
+
+		await again.empty()
 
 		expect(get(again.query('id'))).toBeNull()
 		expect(await next(again.query('id'))).toEqual([])

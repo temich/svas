@@ -222,6 +222,7 @@ class Reflection<T extends { id: string, VERSION: number }> {
   query(index, criteria?, options?: { order?: 'asc' | 'desc', limit?: number }): Readable<Maybe<T[]>>
   get(id): Readable<Maybe<T>>
   sync(): Promise<Error | null>
+  empty(): Promise<void>
 }
 ```
 
@@ -233,12 +234,12 @@ Options:
   and, last, `{ token }`; it answers `expired` where the server no longer continues from the token.
 - `get?: (id) => Promise<T | Error | null>` — an entry the copy does not hold
 - `indexes?: Record<string, string | string[]>` — by name: a property, or a list of them
-- `empty?: boolean` — the collection is known to be empty, as for a new account: queries answer
-  `[]` at once, and nothing is read until `sync`
 - `bind?: Readable<unknown | null>` — deletes the copy when the bound store is `null`
 
 The copy is read on the first subscription, and on `sync()` — call it when something says the
-collection changed. A query answers `null` until the copy holds the whole collection, and from
+collection changed. `empty()` says the collection is empty, as it is for an account just made —
+call it on registration, before anything subscribes: queries answer `[]`, and nothing is read until
+`sync()` or the next start. A query answers `null` until the copy holds the whole collection, and from
 the copy at once on every later start. `criteria` is a key of the index, or bounds of one:
 `{ gt, gte, lt, lte }`; `id` is always an index.
 
