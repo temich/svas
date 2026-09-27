@@ -1,6 +1,7 @@
 import { readable, type Readable, type Subscriber } from 'svelte/store'
-import { open, remove, type Change, type Database, type Indexes, type Meta, type Part, type Versioned } from './reflection/idb'
+import { open, remove, type Change, type Database, type Indexes, type Meta, type Part } from './reflection/idb'
 import type { Maybe } from './Maybe'
+import type { Comparable } from './sync'
 
 /** What `stream` answers where the server no longer continues from the token it was given. */
 export const expired: unique symbol = Symbol('expired')
@@ -10,12 +11,12 @@ export const expired: unique symbol = Symbol('expired')
  * collection once, and from then on what changed in it, from the token the last read ended with.
  * Queries answer from the copy.
  */
-export class Reflection<T extends Versioned> {
+export class Reflection<T extends Comparable> {
   private readonly options: Options<T>
   private readonly indexes: Indexes
   private readonly queries = new Set<Query<T>>()
   private readonly entries = new Map<string, Entry<T>>()
-  private readonly fallbacks = new Map<string, Promise<T | Error | null>>()
+  private readonly fallbacks = new Map<string, Promise<Maybe<T>>>()
   private readonly channel: BroadcastChannel | null
 
   private database: Promise<Database> | null = null
@@ -76,6 +77,24 @@ export class Reflection<T extends Versioned> {
 
       return () => this.entries.delete(key)
     })
+  }
+
+  /**
+   * Takes an entry the application was given — the state a write answered — without reading it:
+   * kept where its `VERSION` is higher than the copy's, taken out where it is `DELETED`. The next
+   * read may bring it again, and changes nothing then.
+   */
+  public async apply(entry: T): Promise<void> {
+    const db = await this.db()
+
+    if (db === null) return
+
+    const changes = await db.put(entry)
+
+    if (changes.length === 0) return
+
+    await this.changed({ changes })
+    this.broadcast({ changes })
   }
 
   /**
@@ -277,11 +296,9 @@ export class Reflection<T extends Versioned> {
   }
 }
 
-export function reflection<T extends Versioned>(options: Options<T>): Reflection<T> {
+export function reflection<T extends Comparable>(options: Options<T>): Reflection<T> {
   return new Reflection(options)
 }
-
-export type { Versioned }
 
 /** What a stream yields, as a toa stream route answers it. */
 export type StreamPart<T> = Part<T> | { token: string | null }
@@ -294,7 +311,7 @@ export interface Options<T> {
   stream: (token: string | undefined) => Promise<AsyncIterable<StreamPart<T>> | typeof expired>
 
   /** Answers an entry the copy does not hold. */
-  get?: (id: string) => Promise<T | Error | null>
+  get?: (id: string) => Promise<Maybe<T>>
 
   /** Indexes by name: a property of the entry, or a list of them. */
   indexes?: Indexes

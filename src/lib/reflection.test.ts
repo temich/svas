@@ -6,6 +6,7 @@ import type { Maybe } from './Maybe'
 interface Pot {
 	id: string
 	VERSION: number
+	DELETED?: number | null
 	type: string
 	title: string
 }
@@ -341,6 +342,56 @@ describe('reflection', () => {
 
 		expect(get(again.query('id'))).toBeNull()
 		expect(await next(again.query('id'))).toEqual([])
+	})
+
+	it('should take the state a write answered without reading it', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1' }],
+			T1: [{ token: 'T2' }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream, indexes: { type: 'type' } })
+
+		const green = pots.query('type', 'green')
+		const seen = next(green, (value) => Array.isArray(value) && value.length === 2)
+
+		// the subscription reads once, and nothing reads after it
+		await pots.sync()
+
+		const reads = asked.length
+
+		await pots.apply(pot('b', 1))
+
+		expect(ids(await seen)).toEqual(['a', 'b'])
+		expect(asked.length).toBe(reads)
+	})
+
+	it('should keep the copy where the state it is given is older', async () => {
+		const { stream } = server({
+			'': [{ entry: pot('a', 3, 'green', 'new') }, { token: 'T1' }],
+			T1: [{ token: 'T2' }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		await pots.sync()
+		await pots.apply(pot('a', 2, 'green', 'old'))
+
+		expect(await next(pots.query('id'))).toEqual([pot('a', 3, 'green', 'new')])
+	})
+
+	it('should take out an entry it is given deleted', async () => {
+		const { stream } = server({
+			'': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1' }],
+			T1: [{ token: 'T2' }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		await pots.sync()
+		await pots.apply({ ...pot('a', 2), DELETED: Date.now() })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
 	})
 
 	it('should refuse an index it was not given', () => {

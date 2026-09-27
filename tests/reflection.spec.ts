@@ -115,3 +115,21 @@ test('two tabs syncing at once read one after the other', async ({ context, requ
 	await expect(green(one)).toHaveText('["a","b","c","d"]')
 	await expect(green(two)).toHaveText('["a","b","c","d"]')
 })
+
+test('another tab takes what one tab applied, without reading it', async ({ context, request }) => {
+	const one = await context.newPage()
+	const two = await context.newPage()
+
+	await one.goto(`/test/reflection?name=${name}`)
+	await expect(green(one)).toHaveText('["a","b","c"]')
+	await two.goto(`/test/reflection?name=${name}`)
+	await expect(green(two)).toHaveText('["a","b","c"]')
+
+	const before = (await server(request, { op: 'noop' })).reads.length
+
+	await one.evaluate((pot) => (window as unknown as { apply: (pot: unknown) => Promise<void> }).apply(pot), pot('b', 2, 'B'))
+
+	await expect(green(one)).toHaveText('["a","B","c"]')
+	await expect(green(two)).toHaveText('["a","B","c"]')
+	expect((await server(request, { op: 'noop' })).reads.length).toBe(before)
+})

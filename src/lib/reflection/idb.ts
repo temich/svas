@@ -1,3 +1,5 @@
+import type { Comparable } from '../sync'
+
 /** What IndexedDB keeps of a reflection: its entries, and where its reading stands. */
 
 export interface Stored<T> {
@@ -98,7 +100,7 @@ export class Database {
    * Applies what one read yielded, and the token it ended with, as one transaction: a read is
    * kept whole or not at all. Answers what changed.
    */
-  public async apply<T extends Versioned>(parts: Array<Part<T>>, meta: Meta): Promise<Array<Change<T>>> {
+  public async apply<T extends Comparable>(parts: Array<Part<T>>, meta: Meta): Promise<Array<Change<T>>> {
     const tx = this.db.transaction([ENTRIES, META], 'readwrite')
     const entries = tx.objectStore(ENTRIES)
     const changes: Array<Change<T>> = []
@@ -123,6 +125,33 @@ export class Database {
     await committed(tx)
 
     this.meta = meta
+
+    return changes
+  }
+
+  /**
+   * An entry the application was given, as a write answers the state it made: kept where its
+   * `VERSION` is higher than the copy's, and taken out where it is `DELETED`.
+   */
+  public async put<T extends Comparable>(entry: T): Promise<Array<Change<T>>> {
+    const tx = this.db.transaction(ENTRIES, 'readwrite')
+    const entries = tx.objectStore(ENTRIES)
+    const held = (await done(entries.get(entry.id))) as Stored<T> | undefined
+    const changes: Array<Change<T>> = []
+
+    if (held === undefined || held.value.VERSION < entry.VERSION) {
+      if (entry.DELETED !== null && entry.DELETED !== undefined) {
+        if (held !== undefined) {
+          entries.delete(entry.id)
+          changes.push({ id: entry.id, before: held.value })
+        }
+      } else {
+        entries.put({ id: entry.id, value: entry, g: held?.g ?? this.meta.generation })
+        changes.push({ id: entry.id, before: held?.value, after: entry })
+      }
+    }
+
+    await committed(tx)
 
     return changes
   }
@@ -169,11 +198,6 @@ export class Database {
   public close(): void {
     this.db.close()
   }
-}
-
-export interface Versioned {
-  id: string
-  VERSION: number
 }
 
 export type Part<T> = { entry: T } | { removed: string }

@@ -34,7 +34,11 @@
 		const query = pots.query('type', 'green')
 		const unsubscribe = query.subscribe((value) => (green = value))
 
-		Object.assign(window, { pots, sync: () => pots.sync().then((error) => error?.message ?? null) })
+		Object.assign(window, {
+			pots,
+			sync: () => pots.sync().then((error) => error?.message ?? null),
+			apply: (pot: Pot) => pots.apply(pot)
+		})
 
 		return unsubscribe
 	})
