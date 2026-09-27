@@ -19,6 +19,7 @@ type Maybe<T, E extends Error = Error> = null | T | E
 ```ts
 import {
   value, values, collection,           // stores
+  reflection, expired,                 // a collection kept in IndexedDB
   ok, ensure, having, awaited, once,   // guards & awaiting
   combined, sync, Async,               // compose & render
   type Maybe
@@ -167,3 +168,23 @@ events.on('todos.sync', (todo) => sync(todos, todo))
 ## Advanced
 
 For derived `Maybe` stores with live subscriptions/cleanup, realtime event wiring, linked/enriched entities, and optimistic update patterns, see [references/patterns.md](references/patterns.md).
+
+## `reflection` — a collection kept in IndexedDB
+
+For a collection a server streams with tokens (a toa stream route): read once, then what changed.
+
+```ts
+const pots = reflection<Pot>({
+  name: 'pots',                                        // IndexedDB `svas:pots`
+  stream: (token) => net.stream('/pots/stream/', token), // parts, or `expired` where the server answers 410
+  get: (id) => net.pot(id),                            // optional: entries outside the copy
+  indexes: { type: 'type' },
+  bind: account
+})
+
+pots.query('type', 'green')        // Readable<Maybe<Pot[]>>, null until the copy is whole
+pots.get(id)                       // Readable<Maybe<Pot>>
+await pots.apply(created)          // the state a write answered, without reading it
+events.on('pots.changed', () => pots.sync())
+await pots.empty()                 // on registration, before subscribing: [] and no read
+```

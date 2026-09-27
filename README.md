@@ -192,6 +192,77 @@ Options:
 
 When a `values` store is provided, mutations to the collection are mirrored into it, so components subscribed via `get(id)` update without re-fetching.
 
+### `reflection<T>(options)`
+
+A copy of a collection a server streams, kept in IndexedDB and kept current. It reads the
+collection once, and from then on what changed in it, from the token the last read ended with.
+Queries answer from the copy, through indexes declared up front.
+
+```ts
+import { reflection, expired, ok } from 'svas'
+
+const pots = reflection<Pot>({
+  name: 'pots',
+  stream: async (token) => {
+    const response = await api.stream('/pots/stream/', token)
+
+    // the server no longer continues from this token: the copy is read again from the start
+    if (response.status === 410) return expired
+
+    return parts(response) // the application's: the parts of the multipart body, as they arrive
+  },
+  get: (id) => api.getPot(id),
+  indexes: { type: 'type', due: ['type', 'due'] },
+  bind: session
+})
+
+const green = pots.query('due', { gte: ['green', 0], lte: ['green', Infinity] })
+const pot = pots.get(id)
+
+const created = await api.createPot(input)
+if (ok(created)) await pots.apply(created)
+
+events.on('pots.changed', () => pots.sync())
+```
+
+Interface:
+
+```ts
+class Reflection<T extends Comparable> {
+  query(index, criteria?, options?: { order?: 'asc' | 'desc', limit?: number }): Readable<Maybe<T[]>>
+  get(id): Readable<Maybe<T>>
+  apply(entry: T): Promise<void>
+  sync(): Promise<Error | null>
+  empty(): Promise<void>
+}
+```
+
+Options:
+
+- `name: string` — the IndexedDB database, `svas:<name>`
+- `stream: (token?: string) => Promise<AsyncIterable<StreamPart<T>> | typeof expired>` — reads
+  the collection from a token, or from the start without one. It yields `{ entry }`, `{ removed }`
+  and, last, `{ token }`, and answers `expired` where the server no longer continues from the token
+- `get?: (id) => Promise<Maybe<T>>` — an entry the copy does not hold
+- `indexes?: Record<string, string | string[]>` — by name: a property, or a list of them
+- `bind?: Readable<unknown | null>` — deletes the copy when the bound store is `null`
+
+The copy is read on the first subscription, and on `sync()` — call it when something says the
+collection changed. A query answers `null` until the copy holds the whole collection, and from the
+copy at once on every later start. `criteria` is a key of the index, or bounds of one:
+`{ gt, gte, lt, lte }`; `id` is always an index.
+
+`apply(entry)` takes the state a write answered without reading it: kept where its `VERSION` is
+higher than the copy's, taken out where it is `DELETED`.
+
+`empty()` says the collection is empty, as it is for an account just made — call it on
+registration, before anything subscribes: queries answer `[]`, and nothing is read until `sync()`
+or the next start. Once a read has started, it does nothing.
+
+A read is kept whole or not at all: one that ends without a token was cut, and the next `sync`
+reads it again. A token the server no longer continues from drops the copy, which is read again.
+One tab reads at a time, and the others take what it read.
+
 ## Utilities
 
 ### `ok(value)`

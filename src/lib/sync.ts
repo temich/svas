@@ -39,7 +39,7 @@ function syncValue<T extends Comparable>(
   else if (asis.VERSION < tobe.VERSION) value.set(tobe)
 }
 
-interface Comparable extends Identifiable {
+export interface Comparable extends Identifiable {
   VERSION: number
   DELETED?: number | null
 }
