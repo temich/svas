@@ -1,3 +1,17 @@
+# [3.1.0](https://github.com/temich/svas/compare/v3.0.0...v3.1.0) (2026-09-27)
+
+
+### Bug Fixes
+
+* leave the copy to a read that started before the collection was said to be empty ([d89d82d](https://github.com/temich/svas/commit/d89d82d7e43748f5f2220adfad293e2981d05413))
+
+
+### Features
+
+* add reflection, a collection kept in IndexedDB and read from a token ([7972e2c](https://github.com/temich/svas/commit/7972e2cacd048b95ca26d87a30f8b5ed461a191c))
+* let a reflection take the state a write answered, without reading it ([132345f](https://github.com/temich/svas/commit/132345fc5e7eb38610a5d2711b0c7ef9af84df89))
+* say a collection is empty by a call made on registration ([8d69e83](https://github.com/temich/svas/commit/8d69e8349b739bfad01b9927a79fe18a1a94cd08))
+
 # [3.0.0](https://github.com/temich/svas/compare/v2.0.1...v3.0.0) (2026-09-18)
 
 
