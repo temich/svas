@@ -192,6 +192,60 @@ Options:
 
 When a `values` store is provided, mutations to the collection are mirrored into it, so components subscribed via `get(id)` update without re-fetching.
 
+### `reflection<T>(options)`
+
+A copy of a collection a server streams, kept in IndexedDB and kept current. It reads the
+collection once, and from then on what changed in it, from the token the last read ended with.
+Queries answer from the copy, through indexes declared up front.
+
+```ts
+import { reflection, expired } from 'svas'
+
+const pots = reflection<Pot>({
+  name: 'pots',
+  stream: (token) => api.stream('/pots/stream/', token),
+  get: (id) => api.getPot(id),
+  indexes: { type: 'type', due: ['type', 'due'] },
+  bind: session
+})
+
+const green = pots.query('due', { gte: ['green', 0], lte: ['green', Infinity] })
+const pot = pots.get(id)
+
+events.on('pots.changed', () => pots.sync())
+```
+
+Interface:
+
+```ts
+class Reflection<T extends { id: string, VERSION: number }> {
+  query(index, criteria?, options?: { order?: 'asc' | 'desc', limit?: number }): Readable<Maybe<T[]>>
+  get(id): Readable<Maybe<T>>
+  sync(): Promise<Error | null>
+}
+```
+
+Options:
+
+- `name: string` — the IndexedDB database, `svas:<name>`
+- `stream: (token?: string) => Promise<AsyncIterable<StreamPart<T>> | typeof expired>` — reads
+  the collection from a token, or from the start without one. It yields `{ entry }`, `{ removed }`
+  and, last, `{ token }`; it answers `expired` where the server no longer continues from the token.
+- `get?: (id) => Promise<T | Error | null>` — an entry the copy does not hold
+- `indexes?: Record<string, string | string[]>` — by name: a property, or a list of them
+- `empty?: boolean` — the collection is known to be empty, as for a new account: queries answer
+  `[]` at once, and nothing is read until `sync`
+- `bind?: Readable<unknown | null>` — deletes the copy when the bound store is `null`
+
+The copy is read on the first subscription, and on `sync()` — call it when something says the
+collection changed. A query answers `null` until the copy holds the whole collection, and from
+the copy at once on every later start. `criteria` is a key of the index, or bounds of one:
+`{ gt, gte, lt, lte }`; `id` is always an index.
+
+A read is kept whole or not at all: one that ends without a token was cut, and the next `sync`
+reads it again. A token the server no longer continues from drops the copy, which is read again.
+One tab reads at a time, and the others take what it read.
+
 ## Utilities
 
 ### `ok(value)`
