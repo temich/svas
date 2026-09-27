@@ -170,6 +170,28 @@ describe('reflection', () => {
 		expect(ids(await read)).toEqual(['a'])
 	})
 
+	it('should do nothing where a read has already started', async () => {
+		const { stream } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1' }],
+			T1: [{ token: 'T2' }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+		const all = pots.query('id')
+
+		expect(ids(await next(all, (value) => Array.isArray(value) && value.length === 1))).toEqual(['a'])
+
+		await pots.empty()
+
+		const seen: Array<Maybe<Pot[]>> = []
+		const unsubscribe = all.subscribe((value) => seen.push(value))
+
+		await new Promise((resolve) => setTimeout(resolve, 20))
+		unsubscribe()
+
+		expect(ids(seen.at(-1)!)).toEqual(['a'])
+	})
+
 	it('should read on the next start after the collection was said to be empty', async () => {
 		const { stream, asked } = server({
 			'': [{ entry: pot('a', 1) }, { token: 'T1' }],

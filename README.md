@@ -239,7 +239,7 @@ Options:
 The copy is read on the first subscription, and on `sync()` — call it when something says the
 collection changed. `empty()` says the collection is empty, as it is for an account just made —
 call it on registration, before anything subscribes: queries answer `[]`, and nothing is read until
-`sync()` or the next start. A query answers `null` until the copy holds the whole collection, and from
+`sync()` or the next start. Once a read has started, it does nothing. A query answers `null` until the copy holds the whole collection, and from
 the copy at once on every later start. `criteria` is a key of the index, or bounds of one:
 `{ gt, gte, lt, lte }`; `id` is always an index.
 

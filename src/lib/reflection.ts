@@ -80,9 +80,12 @@ export class Reflection<T extends Versioned> {
 
   /**
    * Says the collection is empty, as it is for an account just made: queries answer `[]`, and
-   * nothing is read until `sync`. Called before anything subscribes, it saves the first read.
+   * nothing is read until `sync`. It saves the first read, so once a read has started — something
+   * subscribed first — it does nothing, and the copy is what that read makes of it.
    */
   public async empty(): Promise<void> {
+    if (this.started) return
+
     this.started = true
 
     const db = await this.db()
