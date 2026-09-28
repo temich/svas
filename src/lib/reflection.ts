@@ -300,7 +300,7 @@ export function reflection<T extends Comparable>(options: Options<T>): Reflectio
   return new Reflection(options)
 }
 
-/** What a stream yields, as a toa stream route answers it. */
+/** What a stream yields: an entry, the id of one that left the collection, or — last — the token. */
 export type StreamPart<T> = Part<T> | { token: string | null }
 
 export interface Options<T> {

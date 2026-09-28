@@ -52,6 +52,27 @@ Stores share a common lifecycle:
 - `bind: Readable<unknown | null>` nullifies the store when the bound store becomes `null` (useful for tying data to a session/user)
 - `persist: string` mirrors the store into `localStorage` under the given key
 
+## Choosing a store
+
+A list of entities is a `collection` or a `reflection`.
+
+A `reflection` holds a whole collection a server streams with tokens, reads only what changed in
+it, and answers queries through its own indexes. It fits a collection a user owns and can hold
+whole.
+
+A `collection` holds what `get` answered, in the order it answered. It fits where a reflection does
+not:
+
+1. **The server's order or selection.** A search by relevance, a top 10, a ranking, a page of
+   `limit` and `sort` — a view, not a whole collection. A reflection orders by its own indexes
+   only, and holds the whole collection, never a page of it.
+2. **Collections too big for the client.** A reflection holds all of it.
+3. **An API that streams no parts.** A `collection` takes any `get: () => Promise<T[]>`; a
+   reflection needs parts ending with a token, and a `VERSION` on every entry.
+4. **The first render.** A `collection` with `persist` reads `localStorage` as it is made, so the
+   list is there in the first frame. A reflection reads IndexedDB, and answers `null` in the first
+   frame.
+
 ## Stores
 
 ### `value<T>(options)`

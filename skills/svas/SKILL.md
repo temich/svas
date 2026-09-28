@@ -40,6 +40,12 @@ Every store fetches on **first subscribe**, then auto-revalidates. Common option
 | `bind` | `Readable<unknown \| null>` — reset/clear store when bound store is `null` (tie data to a user) |
 | `default` | initial value when nothing is persisted |
 
+## Choosing a store
+
+A list of entities is a `reflection` where it is a whole collection a server streams with tokens and
+the client can hold it; otherwise a `collection` — a server-ordered or paged view, a collection too
+large to hold, an API that streams no parts, or a list that must be there in the first frame.
+
 ## Stores
 
 All stores implements Readable interface from svelte/store.
@@ -171,7 +177,7 @@ For derived `Maybe` stores with live subscriptions/cleanup, realtime event wirin
 
 ## `reflection` — a collection kept in IndexedDB
 
-For a collection a server streams with tokens (a toa stream route): read once, then what changed.
+For a collection a server streams with tokens: read once, then what changed.
 
 ```ts
 const pots = reflection<Pot>({
