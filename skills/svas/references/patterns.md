@@ -60,6 +60,25 @@ export async function add(input: Input): Promise<Todo | Error> {
 }
 ```
 
+### A reflection kept current by events
+
+A reflection reads its stream from the token on the first subscription; after that, events carry
+the changes. An event that exposes the whole entry, `VERSION` included, is applied — nothing is
+read. The stream is read again only where events may have been missed: when the realtime
+connection comes back. It also finds what sends no event, like migrations and converged writes.
+
+```ts
+events.on('pots.updated', (pot) => pots.apply(pot))   // the entry, applied without a read
+events.on('connected', () => pots.sync())              // a reconnect may have missed events
+
+export async function add(input: Input): Promise<Pot | Error> {
+  const res = await net.add(input)
+  if (res instanceof Error) return res
+  await pots.apply(res)                                // the state the write answered
+  return res
+}
+```
+
 ## Linked / enriched entities
 
 Join a network type with domain data. Use `.extract()` for a sync snapshot at map time; subscribe via `.get()` inside derived stores for live enrichment.
