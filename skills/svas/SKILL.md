@@ -40,6 +40,12 @@ Every store fetches on **first subscribe**, then auto-revalidates. Common option
 | `bind` | `Readable<unknown \| null>` — reset/clear store when bound store is `null` (tie data to a user) |
 | `default` | initial value when nothing is persisted |
 
+## Choosing a store
+
+A list of entities is a `reflection` where it is the whole collection a toa stream route serves and
+the client can hold it; otherwise a `collection` — a server-ordered or paged view, a collection too
+large to hold, an API other than a toa stream, or a list that must be there in the first frame.
+
 ## Stores
 
 All stores implements Readable interface from svelte/store.

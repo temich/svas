@@ -52,6 +52,23 @@ Stores share a common lifecycle:
 - `bind: Readable<unknown | null>` nullifies the store when the bound store becomes `null` (useful for tying data to a session/user)
 - `persist: string` mirrors the store into `localStorage` under the given key
 
+## Choosing a store
+
+A list of entities is a `collection` or a `reflection`.
+
+A `reflection` holds the whole collection a toa stream route serves, reads only what changed in it,
+and answers queries through its own indexes. It fits a collection a user owns and can hold whole.
+
+A `collection` holds what `get` answered, in the order it answered. It fits where a reflection does
+not:
+
+- **The server's order or selection** — a search, a ranking, a page of `limit` and `sort`: a view,
+  not a whole collection.
+- **A collection too large to hold whole.**
+- **An API other than a toa stream** — a reflection needs parts, and a `VERSION` on every entry.
+- **A list in the first frame** — a `collection` reads `localStorage` as it is made; a
+  `reflection` reads IndexedDB, and answers `null` in the first frame.
+
 ## Stores
 
 ### `value<T>(options)`
