@@ -252,8 +252,9 @@ collection changed. A query answers `null` until the copy holds the whole collec
 copy at once on every later start. `criteria` is a key of the index, or bounds of one:
 `{ gt, gte, lt, lte }`; `id` is always an index.
 
-`apply(entry)` takes the state a write answered without reading it: kept where its `VERSION` is
-higher than the copy's, taken out where it is `DELETED`.
+`apply(entry)` takes the state a write answered, or an event carried, without reading it: kept
+where its `VERSION` is higher than the copy's, taken out where it is `DELETED`. `sync()` reads the
+stream from the token, at whatever the server's history costs to read from it.
 
 `empty()` says the collection is empty, as it is for an account just made — call it on
 registration, before anything subscribes: queries answer `[]`, and nothing is read until `sync()`
