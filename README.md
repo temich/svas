@@ -56,8 +56,9 @@ Stores share a common lifecycle:
 
 A list of entities is a `collection` or a `reflection`.
 
-A `reflection` holds the whole collection a toa stream route serves, reads only what changed in it,
-and answers queries through its own indexes. It fits a collection a user owns and can hold whole.
+A `reflection` holds a whole collection a server streams with tokens, reads only what changed in
+it, and answers queries through its own indexes. It fits a collection a user owns and can hold
+whole.
 
 A `collection` holds what `get` answered, in the order it answered. It fits where a reflection does
 not:
@@ -65,7 +66,8 @@ not:
 - **The server's order or selection** — a search, a ranking, a page of `limit` and `sort`: a view,
   not a whole collection.
 - **A collection too large to hold whole.**
-- **An API other than a toa stream** — a reflection needs parts, and a `VERSION` on every entry.
+- **An API that streams no parts** — a reflection needs parts ending with a token, and a `VERSION`
+  on every entry.
 - **A list in the first frame** — a `collection` reads `localStorage` as it is made; a
   `reflection` reads IndexedDB, and answers `null` in the first frame.
 

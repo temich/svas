@@ -42,9 +42,9 @@ Every store fetches on **first subscribe**, then auto-revalidates. Common option
 
 ## Choosing a store
 
-A list of entities is a `reflection` where it is the whole collection a toa stream route serves and
+A list of entities is a `reflection` where it is a whole collection a server streams with tokens and
 the client can hold it; otherwise a `collection` — a server-ordered or paged view, a collection too
-large to hold, an API other than a toa stream, or a list that must be there in the first frame.
+large to hold, an API that streams no parts, or a list that must be there in the first frame.
 
 ## Stores
 
@@ -177,7 +177,7 @@ For derived `Maybe` stores with live subscriptions/cleanup, realtime event wirin
 
 ## `reflection` — a collection kept in IndexedDB
 
-For a collection a server streams with tokens (a toa stream route): read once, then what changed.
+For a collection a server streams with tokens: read once, then what changed.
 
 ```ts
 const pots = reflection<Pot>({
