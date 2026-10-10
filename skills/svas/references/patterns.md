@@ -79,6 +79,41 @@ export async function add(input: Input): Promise<Pot | Error> {
 }
 ```
 
+### The stream of a reflection
+
+`stream` answers the parts of one read, `expired` where the server no longer continues from the
+token, and throws where the read cannot be made. It also says where a read was the last, so that
+no read follows only to find that out:
+
+```ts
+const WINDOW = 100
+
+async function stream(token?: string) {
+  const parts = await net.stream(token, WINDOW)        // the parts of the multipart body, or an Error
+
+  if (parts instanceof Error) {
+    // a failed `multipart` of `@toa.io/origin` is a `Failure`: its `code` is the status
+    if (parts.code === 410) return expired
+
+    throw parts
+  }
+
+  return marked(parts)
+}
+
+// fewer parts than a window: nothing is left behind the token
+async function* marked(parts: AsyncIterable<StreamPart<Pot>>) {
+  let count = 0
+
+  for await (const part of parts)
+    if ('token' in part) yield { ...part, final: count < WINDOW }
+    else {
+      count++
+      yield part
+    }
+}
+```
+
 ## Linked / enriched entities
 
 Join a network type with domain data. Use `.extract()` for a sync snapshot at map time; subscribe via `.get()` inside derived stores for live enrichment.

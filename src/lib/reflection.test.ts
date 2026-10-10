@@ -76,6 +76,24 @@ describe('reflection', () => {
 		expect(asked).toEqual([undefined, 'T1', 'T2'])
 	})
 
+	it('should read no further where the stream says a read was the last', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1', final: true }],
+			T1: [{ entry: pot('c', 1) }, { token: 'T2', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+		const all = pots.query('id')
+
+		// whole after one read, which a read that brought entries otherwise is not
+		expect(ids(await next(all))).toEqual(['a', 'b'])
+		expect(asked).toEqual([undefined])
+
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([undefined, 'T1'])
+		expect(ids(await next(pots.query('id')))).toEqual(['a', 'b', 'c'])
+	})
+
 	it('should keep the higher version and drop what was removed', async () => {
 		const { stream } = server({
 			'': [{ entry: pot('a', 2, 'green', 'new') }, { entry: pot('b', 1) }, { token: 'T1' }],
@@ -427,6 +445,63 @@ describe('reflection', () => {
 		await pots.sync()
 		await pots.apply({ ...pot('a', 2), DELETED: Date.now() })
 
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+	})
+
+	it('should take out an entry the application says has left, without reading', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a', 'b'])
+
+		await pots.remove('a')
+
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+		expect(asked).toEqual([undefined])
+	})
+
+	it('should drop the copy and read the collection again when it is reset', async () => {
+		const reads: Record<string, Parts> = {
+			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }]
+		}
+
+		const { stream, asked } = server(reads)
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		reads[''] = [{ entry: pot('b', 1) }, { token: 'T2', final: true }]
+
+		expect(await pots.reset()).toBeNull()
+		expect(asked).toEqual([undefined, undefined])
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+	})
+
+	it('should read the collection again where it is read under another scope', async () => {
+		const reads: Record<string, Parts> = {
+			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }],
+			T1: [{ token: 'T2' }]
+		}
+
+		let scope = 'all'
+
+		const { stream, asked } = server(reads)
+		const pots = reflection<Pot>({ name: db, stream, scope: () => scope })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		// the same scope: the token continues
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([undefined, 'T1'])
+
+		scope = 'green'
+		reads[''] = [{ entry: pot('b', 1) }, { token: 'T3', final: true }]
+
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([undefined, 'T1', undefined])
 		expect(ids(await next(pots.query('id')))).toEqual(['b'])
 	})
 
