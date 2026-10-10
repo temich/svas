@@ -113,6 +113,36 @@ describe('reflection', () => {
 		expect(ids(await next(pots.query('id')))).toEqual(['a', 'b'])
 	})
 
+	it('should answer the error of the read that was to make the copy whole, and the copy once a read succeeds', async () => {
+		const reads: Record<string, Parts | Error> = { '': new Error('Refused') }
+		const pots = reflection<Pot>({ name: db, stream: server(reads).stream })
+		const all = pots.query('id')
+
+		const failed = await next(all, (value) => value instanceof Error)
+
+		expect(failed).toBeInstanceOf(Error)
+
+		reads[''] = [{ entry: pot('a', 1) }, { token: null }]
+
+		expect(await pots.sync()).toBeNull()
+		expect(ids(await next(all, Array.isArray))).toEqual(['a'])
+	})
+
+	it('should go on answering from a whole copy where a later read fails', async () => {
+		const { stream } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1' }],
+			T1: [{ token: 'T2' }],
+			T2: new Error('Refused')
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+		const all = pots.query('id')
+
+		expect(ids(await next(all))).toEqual(['a'])
+		expect(await pots.sync()).toBeInstanceOf(Error)
+		expect(ids(get(all))).toEqual(['a'])
+	})
+
 	it('should read the collection again when the server no longer continues from the token', async () => {
 		const reads: Record<string, Parts | typeof expired> = {
 			'': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1' }],
@@ -209,7 +239,13 @@ describe('reflection', () => {
 	})
 
 	it('should answer null until the copy holds the whole collection', async () => {
-		const { stream } = server({ '': [{ entry: pot('a', 1) }] })
+		// the first page is held before the second is read, and answers nothing by itself
+		const { stream } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1' }],
+			T1: [{ entry: pot('b', 1) }, { token: 'T2' }],
+			T2: [{ token: 'T3' }]
+		})
+
 		const pots = reflection<Pot>({ name: db, stream })
 		const all = pots.query('id')
 
@@ -219,7 +255,7 @@ describe('reflection', () => {
 		await pots.sync()
 		unsubscribe()
 
-		expect(seen.every((value) => value === null)).toBe(true)
+		expect(seen.filter((value) => value !== null).map(ids)).toEqual([['a', 'b']])
 	})
 
 	it('should answer an entry from the copy, and from get where the copy holds none', async () => {

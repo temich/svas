@@ -46,7 +46,8 @@ export class Reflection<T extends Comparable> {
 
   /**
    * The entries an index range selects, in the order of the index: a key, or bounds of one.
-   * `null` until the copy holds the whole collection.
+   * `null` until the copy holds the whole collection, and the error of the read that was to make
+   * it whole, where it failed.
    */
   public query(index: string, criteria?: Criteria, options?: QueryOptions): Readable<Maybe<T[]>> {
     if (index !== 'id' && !(index in this.indexes))
@@ -135,9 +136,15 @@ export class Reflection<T extends Comparable> {
       return await this.queued
     }
 
-    this.syncing = this.locked().finally(() => {
-      this.syncing = null
-    })
+    this.syncing = this.locked()
+      .then(async (result) => {
+        if (result instanceof Error) await this.failed(result)
+
+        return result
+      })
+      .finally(() => {
+        this.syncing = null
+      })
 
     return await this.syncing
   }
@@ -205,6 +212,19 @@ export class Reflection<T extends Comparable> {
     } catch (error) {
       return error instanceof Error ? error : new Error(String(error))
     }
+  }
+
+  /**
+   * A read failed. Where the copy is not whole yet, nothing answers the queries, so the error
+   * does — as a fetch error is the value of any other store — until a later read succeeds. A whole
+   * copy goes on answering: what it missed is read on the next `sync`.
+   */
+  private async failed(error: Error): Promise<void> {
+    const db = await this.db()
+
+    if (db === null || db.meta.complete) return
+
+    for (const query of this.queries) query.set(error)
   }
 
   private async db(): Promise<Database | null> {

@@ -270,7 +270,9 @@ Options:
 
 The copy is read on the first subscription, and on `sync()` — call it when something says the
 collection changed. A query answers `null` until the copy holds the whole collection, and from the
-copy at once on every later start. `criteria` is a key of the index, or bounds of one:
+copy at once on every later start. Where the read that was to make the copy whole fails, the query
+answers its error, as any store answers a fetch error; a copy that is whole goes on answering, and
+`sync()` returns the error. `criteria` is a key of the index, or bounds of one:
 `{ gt, gte, lt, lte }`; `id` is always an index.
 
 `apply(entry)` takes the state a write answered, or an event carried, without reading it: kept
