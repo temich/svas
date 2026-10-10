@@ -1,3 +1,10 @@
+## [3.1.1](https://github.com/temich/svas/compare/v3.1.0...v3.1.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **reflection:** a query answers the error of the read that was to make the copy whole ([56f0deb](https://github.com/temich/svas/commit/56f0deb9b2bed342903aa0c5d3b99fe11a4e6d0c))
+
 # [3.1.0](https://github.com/temich/svas/compare/v3.0.0...v3.1.0) (2026-09-27)
 
 
