@@ -283,6 +283,11 @@ stream from the token, at whatever the server's history costs to read from it.
 registration, before anything subscribes: queries answer `[]`, and nothing is read until `sync()`
 or the next start. Once a read has started, it does nothing.
 
+A read that brought entries is followed by another, from its token, until one brings none: that
+is how a collection read in windows is known to have ended. Where `stream` knows a read was the
+last — its window came shorter than was asked for, or it told the server to read no deeper — it
+says so on the token, `{ token, final: true }`, and no read follows.
+
 A read is kept whole or not at all: one that ends without a token was cut, and the next `sync`
 reads it again. A token the server no longer continues from drops the copy, which is read again.
 One tab reads at a time, and the others take what it read.

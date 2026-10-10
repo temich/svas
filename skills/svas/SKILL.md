@@ -183,6 +183,7 @@ For a collection a server streams with tokens: read once, then what changed.
 const pots = reflection<Pot>({
   name: 'pots',                                        // IndexedDB `svas:pots`
   stream: (token) => net.stream('/pots/stream/', token), // parts, or `expired` where the server answers 410
+                                                       // `{ token, final: true }` where the read was the last: no read follows
   get: (id) => net.pot(id),                            // optional: entries outside the copy
   indexes: { type: 'type' },
   bind: account

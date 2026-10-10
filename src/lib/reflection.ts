@@ -189,12 +189,12 @@ export class Reflection<T extends Comparable> {
           continue
         }
 
-        const { parts, token, ended } = await collect(source)
+        const { parts, token, ended, final } = await collect(source)
 
         // a read that ends without a token was cut: nothing of it is kept, and it is read again
         if (!ended) return new Error('Reflection: the stream was cut')
 
-        const complete = meta.complete || parts.length === 0 || token === null
+        const complete = meta.complete || parts.length === 0 || token === null || final
         const all = complete && !meta.complete
 
         meta = { ...meta, token, complete }
@@ -207,7 +207,9 @@ export class Reflection<T extends Comparable> {
         await this.changed({ changes, all })
         this.broadcast({ changes, all })
 
-        if (token === null || parts.length === 0) return null
+        // nothing is left to read: the server keeps no history, the read brought nothing, or
+        // whoever read it says it was the last
+        if (token === null || parts.length === 0 || final) return null
       }
     } catch (error) {
       return error instanceof Error ? error : new Error(String(error))
@@ -320,8 +322,13 @@ export function reflection<T extends Comparable>(options: Options<T>): Reflectio
   return new Reflection(options)
 }
 
-/** What a stream yields: an entry, the id of one that left the collection, or — last — the token. */
-export type StreamPart<T> = Part<T> | { token: string | null }
+/**
+ * What a stream yields: an entry, the id of one that left the collection, or — last — the token.
+ * With `final`, whoever read the stream says nothing is left behind the token: a window shorter
+ * than was asked for, or a read that was told to go no deeper. The copy is whole then, and no
+ * read follows to find that out.
+ */
+export type StreamPart<T> = Part<T> | { token: string | null; final?: boolean }
 
 export interface Options<T> {
   /** The IndexedDB database the copy is kept in, as `svas:<name>`. */
@@ -367,23 +374,25 @@ interface Message<T> {
   all?: boolean
 }
 
-async function collect<T>(source: AsyncIterable<StreamPart<T>>): Promise<{ parts: Array<Part<T>>; token: string | null; ended: boolean }> {
+async function collect<T>(source: AsyncIterable<StreamPart<T>>): Promise<{ parts: Array<Part<T>>; token: string | null; ended: boolean; final: boolean }> {
   const parts: Array<Part<T>> = []
   let token: string | null = null
   let ended = false
+  let final = false
 
   try {
     for await (const part of source) {
       if ('token' in part) {
         token = part.token
+        final = part.final === true
         ended = true
       } else parts.push(part)
     }
   } catch {
-    return { parts, token, ended: false }
+    return { parts, token, ended: false, final: false }
   }
 
-  return { parts, token, ended }
+  return { parts, token, ended, final }
 }
 
 function touches<T>(query: Query<T>, change: Change<T>): boolean {

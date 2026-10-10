@@ -76,6 +76,24 @@ describe('reflection', () => {
 		expect(asked).toEqual([undefined, 'T1', 'T2'])
 	})
 
+	it('should read no further where the stream says a read was the last', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1', final: true }],
+			T1: [{ entry: pot('c', 1) }, { token: 'T2', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+		const all = pots.query('id')
+
+		// whole after one read, which a read that brought entries otherwise is not
+		expect(ids(await next(all))).toEqual(['a', 'b'])
+		expect(asked).toEqual([undefined])
+
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([undefined, 'T1'])
+		expect(ids(await next(all))).toEqual(['a', 'b', 'c'])
+	})
+
 	it('should keep the higher version and drop what was removed', async () => {
 		const { stream } = server({
 			'': [{ entry: pot('a', 2, 'green', 'new') }, { entry: pot('b', 1) }, { token: 'T1' }],
