@@ -253,6 +253,8 @@ class Reflection<T extends Comparable> {
   query(index, criteria?, options?: { order?: 'asc' | 'desc', limit?: number }): Readable<Maybe<T[]>>
   get(id): Readable<Maybe<T>>
   apply(entry: T): Promise<void>
+  remove(id): Promise<void>
+  reset(): Promise<Error | null>
   sync(): Promise<Error | null>
   empty(): Promise<void>
 }
@@ -264,6 +266,8 @@ Options:
 - `stream: (token?: string) => Promise<AsyncIterable<StreamPart<T>> | typeof expired>` — reads
   the collection from a token, or from the start without one. It yields `{ entry }`, `{ removed }`
   and, last, `{ token }`, and answers `expired` where the server no longer continues from the token
+- `scope?: () => string | number | undefined` — what the collection is read under: the criteria
+  `stream` sends beside the token. May be async
 - `get?: (id) => Promise<Maybe<T>>` — an entry the copy does not hold
 - `indexes?: Record<string, string | string[]>` — by name: a property, or a list of them
 - `bind?: Readable<unknown | null>` — deletes the copy when the bound store is `null`
@@ -282,6 +286,22 @@ stream from the token, at whatever the server's history costs to read from it.
 `empty()` says the collection is empty, as it is for an account just made — call it on
 registration, before anything subscribes: queries answer `[]`, and nothing is read until `sync()`
 or the next start. Once a read has started, it does nothing.
+
+`remove(id)` takes an entry out without reading it: one the application knows has left the
+collection, as after a write that removed it. A read that still finds the entry brings it back.
+
+A token is of the criteria it was issued under. Where `stream` reads under criteria that change —
+a filter, a moment the collection is read from — name them in `scope`: a copy read under another
+scope is dropped and the collection read again, before the server has to refuse the token.
+`reset()` does the same on demand.
+
+Where `stream` cannot make a read, it throws: nothing of that read is kept, `sync()` answers the
+error, and the next `sync()` reads again.
+
+A read that brought entries is followed by another, from its token, until one brings none: that
+is how a collection read in windows is known to have ended. Where `stream` knows a read was the
+last — its window came shorter than was asked for, or it told the server to read no deeper — it
+says so on the token, `{ token, final: true }`, and no read follows.
 
 A read is kept whole or not at all: one that ends without a token was cut, and the next `sync`
 reads it again. A token the server no longer continues from drops the copy, which is read again.
