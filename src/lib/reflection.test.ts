@@ -448,6 +448,63 @@ describe('reflection', () => {
 		expect(ids(await next(pots.query('id')))).toEqual(['b'])
 	})
 
+	it('should take out an entry the application says has left, without reading', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a', 'b'])
+
+		await pots.remove('a')
+
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+		expect(asked).toEqual([undefined])
+	})
+
+	it('should drop the copy and read the collection again when it is reset', async () => {
+		const reads: Record<string, Parts> = {
+			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }]
+		}
+
+		const { stream, asked } = server(reads)
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		reads[''] = [{ entry: pot('b', 1) }, { token: 'T2', final: true }]
+
+		expect(await pots.reset()).toBeNull()
+		expect(asked).toEqual([undefined, undefined])
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+	})
+
+	it('should read the collection again where it is read under another scope', async () => {
+		const reads: Record<string, Parts> = {
+			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }],
+			T1: [{ token: 'T2' }]
+		}
+
+		let scope = 'all'
+
+		const { stream, asked } = server(reads)
+		const pots = reflection<Pot>({ name: db, stream, scope: () => scope })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		// the same scope: the token continues
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([undefined, 'T1'])
+
+		scope = 'green'
+		reads[''] = [{ entry: pot('b', 1) }, { token: 'T3', final: true }]
+
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([undefined, 'T1', undefined])
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+	})
+
 	it('should refuse an index it was not given', () => {
 		const pots = reflection<Pot>({ name: db, stream: async () => expired })
 

@@ -22,6 +22,9 @@ export class Reflection<T extends Comparable> {
   private database: Promise<Database> | null = null
   private started = false
 
+  /** the next read starts by dropping the copy */
+  private dropping = false
+
   /** the read in flight, and the one that starts after it */
   private syncing: Promise<Error | null> | null = null
   private queued: Promise<Error | null> | null = null
@@ -99,6 +102,34 @@ export class Reflection<T extends Comparable> {
   }
 
   /**
+   * Takes an entry out of the copy without reading it: one the application knows has left the
+   * collection, as it does once a write that removes it was answered. It says nothing of the
+   * server: a read that still finds the entry brings it back.
+   */
+  public async remove(id: string): Promise<void> {
+    const db = await this.db()
+
+    if (db === null) return
+
+    const changes = await db.drop<T>(id)
+
+    if (changes.length === 0) return
+
+    await this.changed({ changes })
+    this.broadcast({ changes })
+  }
+
+  /**
+   * Drops the copy and reads the collection again from the start: what the application knows the
+   * token no longer continues, before a server has to say so.
+   */
+  public async reset(): Promise<Error | null> {
+    this.dropping = true
+
+    return await this.sync()
+  }
+
+  /**
    * Says the collection is empty, as it is for an account just made: queries answer `[]`, and
    * nothing is read until `sync`. It saves the first read, so once a read has started — something
    * subscribed first — it does nothing, and the copy is what that read makes of it.
@@ -170,6 +201,22 @@ export class Reflection<T extends Comparable> {
       if (db === null) return null
 
       let meta = { ...(await db.reload()) }
+
+      const scope = await this.scope()
+      const held = meta.complete || (meta.token !== undefined && meta.token !== null)
+
+      // a copy read under another scope, or one the application gave up, is no copy of this
+      // collection: it goes, and the collection is read from the start
+      if (this.dropping || (held && meta.scope !== scope)) {
+        this.dropping = false
+        meta = { ...meta, token: undefined, complete: false, generation: meta.generation + 1 }
+        await db.clear(meta)
+        await this.changed({ all: true })
+        this.broadcast({ all: true })
+      }
+
+      meta = { ...meta, scope }
+
       let whole = meta.token === undefined || meta.token === null
 
       if (whole) meta = { ...meta, token: undefined, generation: meta.generation + 1 }
@@ -214,6 +261,13 @@ export class Reflection<T extends Comparable> {
     } catch (error) {
       return error instanceof Error ? error : new Error(String(error))
     }
+  }
+
+  /** What the collection is read under, as the application has it now: `undefined` where it names none. */
+  private async scope(): Promise<string | undefined> {
+    const scope = await this.options.scope?.()
+
+    return scope === undefined ? undefined : String(scope)
   }
 
   /**
@@ -334,8 +388,19 @@ export interface Options<T> {
   /** The IndexedDB database the copy is kept in, as `svas:<name>`. */
   name: string
 
-  /** Reads the collection from a token, or from the start without one. */
+  /**
+   * Reads the collection from a token, or from the start without one. A read that cannot be made
+   * throws: nothing of it is kept, `sync` answers the error, and the next `sync` reads again.
+   */
   stream: (token: string | undefined) => Promise<AsyncIterable<StreamPart<T>> | typeof expired>
+
+  /**
+   * What the collection is read under — the criteria of the request, whatever `stream` adds to it
+   * beside the token. A token is of the scope it was issued under: where the scope is another
+   * than the copy was read under, the copy is dropped and the collection read again, without the
+   * server having to refuse the token first.
+   */
+  scope?: () => string | number | undefined | Promise<string | number | undefined>
 
   /** Answers an entry the copy does not hold. */
   get?: (id: string) => Promise<Maybe<T>>

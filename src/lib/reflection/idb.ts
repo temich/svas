@@ -17,6 +17,8 @@ export interface Meta {
   generation: number
   /** the indexes the database was made with */
   declaration: string
+  /** what the copy was read under: a token is of it, and of no other */
+  scope?: string
 }
 
 export type Indexes = Record<string, string | string[]>
@@ -154,6 +156,19 @@ export class Database {
     await committed(tx)
 
     return changes
+  }
+
+  /** Takes an entry out, as the application says it left the collection. */
+  public async drop<T>(id: string): Promise<Array<Change<T>>> {
+    const tx = this.db.transaction(ENTRIES, 'readwrite')
+    const entries = tx.objectStore(ENTRIES)
+    const held = (await done(entries.get(id))) as Stored<T> | undefined
+
+    if (held !== undefined) entries.delete(id)
+
+    await committed(tx)
+
+    return held === undefined ? [] : [{ id, before: held.value }]
   }
 
   /** Deletes what a read of the whole collection did not find. */
