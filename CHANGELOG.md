@@ -1,3 +1,11 @@
+# [3.2.0](https://github.com/temich/svas/compare/v3.1.1...v3.2.0) (2026-10-10)
+
+
+### Features
+
+* **reflection:** a stream says a read was the last ([5dc5679](https://github.com/temich/svas/commit/5dc5679469141a28b23316cecf4553afade601d2))
+* **reflection:** an entry is taken out, the copy reset, and a scope named ([34a8d82](https://github.com/temich/svas/commit/34a8d82518ef09d3e6a93e3c31d062026790d632))
+
 ## [3.1.1](https://github.com/temich/svas/compare/v3.1.0...v3.1.1) (2026-10-10)
 
 
