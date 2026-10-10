@@ -91,7 +91,7 @@ describe('reflection', () => {
 
 		expect(await pots.sync()).toBeNull()
 		expect(asked).toEqual([undefined, 'T1'])
-		expect(ids(await next(all))).toEqual(['a', 'b', 'c'])
+		expect(ids(await next(pots.query('id')))).toEqual(['a', 'b', 'c'])
 	})
 
 	it('should keep the higher version and drop what was removed', async () => {
