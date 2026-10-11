@@ -243,7 +243,12 @@ const pot = pots.get(id)
 const created = await api.createPot(input)
 if (ok(created)) await pots.apply(created)
 
-events.on('pots.changed', () => pots.sync())
+// an event carries the change, and it is applied: nothing is read
+events.on('pots.changed', (pot) => pots.apply(pot))
+events.on('pots.removed', ({ id }) => pots.apply({ removed: id }))
+
+// the collection is read again only where events may have been missed
+events.on('connected', () => pots.sync())
 ```
 
 Interface:
@@ -252,7 +257,7 @@ Interface:
 class Reflection<T extends Comparable> {
   query(index, criteria?, options?: { order?: 'asc' | 'desc', limit?: number }): Readable<Maybe<T[]>>
   get(id): Readable<Maybe<T>>
-  apply(entry: T): Promise<void>
+  apply(change: T | { entry: T } | { removed: string, VERSION?: number }): Promise<void>
   remove(id): Promise<void>
   reset(): Promise<Error | null>
   sync(): Promise<Error | null>
@@ -272,23 +277,38 @@ Options:
 - `indexes?: Record<string, string | string[]>` — by name: a property, or a list of them
 - `bind?: Readable<unknown | null>` — deletes the copy when the bound store is `null`
 
-The copy is read on the first subscription, and on `sync()` — call it when something says the
-collection changed. A query answers `null` until the copy holds the whole collection, and from the
+The copy is read on the first subscription, and from then on it is kept by what the application
+is told: an event that carries a change is applied, and nothing is read for it. `sync()` reads
+the collection again, and is for where events may have been missed — a realtime connection that
+came back — never for an event that arrived. A query answers `null` until the copy holds the whole collection, and from the
 copy at once on every later start. Where the read that was to make the copy whole fails, the query
 answers its error, as any store answers a fetch error; a copy that is whole goes on answering, and
 `sync()` returns the error. `criteria` is a key of the index, or bounds of one:
 `{ gt, gte, lt, lte }`; `id` is always an index.
 
-`apply(entry)` takes the state a write answered, or an event carried, without reading it: kept
-where its `VERSION` is higher than the copy's, taken out where it is `DELETED`. `sync()` reads the
-stream from the token, at whatever the server's history costs to read from it.
+`apply(change)` takes a change without reading the collection: an entry — the state a write
+answered, or what an event carries — or a part as the stream yields them, `{ entry }` or
+`{ removed: id }`. An entry is kept where its `VERSION` is higher than the copy's, and taken out
+where it is `DELETED`, so changes may come in any order, and beside a read in flight. What was
+removed is remembered: an older state of it that comes later does not bring it back. Told the
+version it left at, `{ removed: id, VERSION }`, a later version is the entry again; told none, the
+next read says.
+
+Whether an entry still belongs to the collection is for whoever reads it to say: the function
+that builds the request of `stream` knows its criteria, and one beside it turns an event into
+`{ entry }` or `{ removed }` by the same criteria. Removing what the copy does not hold changes
+nothing, so it need not know what the entry was before.
+
+`sync()` reads the stream from the token, at whatever the server's history costs to read from it,
+or the whole collection where the server keeps no history.
 
 `empty()` says the collection is empty, as it is for an account just made — call it on
 registration, before anything subscribes: queries answer `[]`, and nothing is read until `sync()`
 or the next start. Once a read has started, it does nothing.
 
-`remove(id)` takes an entry out without reading it: one the application knows has left the
-collection, as after a write that removed it. A read that still finds the entry brings it back.
+`remove(id)` is `apply({ removed: id })`: an entry the application knows has left the collection,
+as after a write that removed it. A read that begins later and still finds the entry brings it
+back.
 
 A token is of the criteria it was issued under. Where `stream` reads under criteria that change —
 a filter, a moment the collection is read from — name them in `scope`: a copy read under another

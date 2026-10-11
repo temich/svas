@@ -62,14 +62,26 @@ export async function add(input: Input): Promise<Todo | Error> {
 
 ### A reflection kept current by events
 
-A reflection reads its stream from the token on the first subscription; after that, events carry
-the changes. An event that exposes the whole entry, `VERSION` included, is applied — nothing is
-read. The stream is read again only where events may have been missed: when the realtime
-connection comes back. It also finds what sends no event, like migrations and converged writes.
+A reflection reads its stream on the first subscription; after that, events carry the changes.
+**An event never causes a read of the collection**: it exposes the whole entry, `VERSION`
+included, and is applied. The stream is read again only where events may have been missed: when
+the realtime connection comes back. It also finds what sends no event, like migrations and
+converged writes.
+
+Whether an entry still belongs to the collection is decided in the net layer, by a function
+beside the one that builds the request of `stream`: only what formed the criteria can test them.
+It answers a part, as the stream yields them. An event must carry every property the criteria
+read; one that does not is extended, and nothing is fetched to find out.
 
 ```ts
-events.on('pots.updated', (pot) => pots.apply(pot))   // the entry, applied without a read
-events.on('connected', () => pots.sync())              // a reconnect may have missed events
+// net: the criteria of the request, and the same criteria for an event
+export const stream = (token?: string) => read('/pots/', { criteria: 'archived==null', token })
+export const change = (pot: Pot): Part<Pot> =>
+  pot.archived === null ? { entry: pot } : { removed: pot.id, VERSION: pot.VERSION }
+
+// store: knows no criteria
+events.on('pots.updated', (pot) => pots.apply(net.change(pot)))   // applied without a read
+events.on('connected', () => pots.sync())                          // a reconnect may have missed events
 
 export async function add(input: Input): Promise<Pot | Error> {
   const res = await net.add(input)

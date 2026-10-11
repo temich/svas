@@ -194,8 +194,9 @@ const pots = reflection<Pot>({
 pots.query('type', 'green')        // Readable<Maybe<Pot[]>>, null until the copy is whole
 pots.get(id)                       // Readable<Maybe<Pot>>
 await pots.apply(created)          // the state a write answered, without reading it
-await pots.remove(id)              // an entry the application knows has left the collection
+await pots.apply({ removed: id })  // an entry that left the collection; `remove(id)` is the same
 await pots.reset()                 // drop the copy and read the collection again
-events.on('pots.changed', () => pots.sync())
+events.on('pots.changed', (event) => pots.apply(net.change(event)))  // an event is applied, never read for
+events.on('connected', () => pots.sync())                           // read again only after a gap
 await pots.empty()                 // on registration, before subscribing: [] and no read
 ```

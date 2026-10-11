@@ -29,6 +29,9 @@ export class Reflection<T extends Comparable> {
   private syncing: Promise<Error | null> | null = null
   private queued: Promise<Error | null> | null = null
 
+  /** the generation of the read in flight: what is applied meanwhile is found by it */
+  private reading: number | null = null
+
   public constructor(options: Options<T>) {
     this.options = options
     this.indexes = options.indexes ?? {}
@@ -84,16 +87,24 @@ export class Reflection<T extends Comparable> {
   }
 
   /**
-   * Takes an entry the application was given — the state a write answered — without reading it:
-   * kept where its `VERSION` is higher than the copy's, taken out where it is `DELETED`. The next
-   * read may bring it again, and changes nothing then.
+   * Takes a change the application was told of — an event that carries it, or the state a write
+   * answered — without reading the collection: an entry, or a part as a stream yields them,
+   * `{ entry }` or `{ removed }`. An entry is kept where its `VERSION` is higher than the copy's,
+   * and taken out where it is `DELETED`. One that was removed is not brought back by an older
+   * state of it, whichever comes first: told the `VERSION` it left at, a later one is the entry
+   * again, and otherwise the next read says.
    */
-  public async apply(entry: T): Promise<void> {
+  public async apply(change: T | Part<T>): Promise<void> {
     const db = await this.db()
 
     if (db === null) return
 
-    const changes = await db.put(entry)
+    let changes: Array<Change<T>>
+
+    // an entry has an id, and a part has none: an entry may well have a property named as a part's
+    if ('id' in change) changes = await db.put(change, this.reading ?? db.meta.generation)
+    else if ('entry' in change) changes = await db.put(change.entry, this.reading ?? db.meta.generation)
+    else changes = await db.drop<T>(change.removed, change.VERSION)
 
     if (changes.length === 0) return
 
@@ -103,20 +114,10 @@ export class Reflection<T extends Comparable> {
 
   /**
    * Takes an entry out of the copy without reading it: one the application knows has left the
-   * collection, as it does once a write that removes it was answered. It says nothing of the
-   * server: a read that still finds the entry brings it back.
+   * collection. The same as applying `{ removed: id }`.
    */
   public async remove(id: string): Promise<void> {
-    const db = await this.db()
-
-    if (db === null) return
-
-    const changes = await db.drop<T>(id)
-
-    if (changes.length === 0) return
-
-    await this.changed({ changes })
-    this.broadcast({ changes })
+    await this.apply({ removed: id })
   }
 
   /**
@@ -200,6 +201,9 @@ export class Reflection<T extends Comparable> {
 
       if (db === null) return null
 
+      // what was said to have left after this moment, the read may not know of
+      const started = Date.now()
+
       let meta = { ...(await db.reload()) }
 
       const scope = await this.scope()
@@ -222,6 +226,8 @@ export class Reflection<T extends Comparable> {
       if (whole) meta = { ...meta, token: undefined, generation: meta.generation + 1 }
 
       while (true) {
+        this.reading = meta.generation
+
         const source = await this.options.stream(meta.token ?? undefined)
 
         if (source === expired) {
@@ -246,7 +252,7 @@ export class Reflection<T extends Comparable> {
 
         meta = { ...meta, token, complete }
 
-        const changes = await db.apply(parts, meta)
+        const changes = await db.apply(parts, meta, started)
 
         if (token === null && whole) changes.push(...(await db.sweep<T>(meta.generation)))
 
@@ -260,6 +266,8 @@ export class Reflection<T extends Comparable> {
       }
     } catch (error) {
       return error instanceof Error ? error : new Error(String(error))
+    } finally {
+      this.reading = null
     }
   }
 
@@ -512,4 +520,4 @@ function available(): boolean {
   return typeof indexedDB !== 'undefined'
 }
 
-export type { Meta }
+export type { Meta, Part }
