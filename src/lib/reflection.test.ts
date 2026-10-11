@@ -463,6 +463,113 @@ describe('reflection', () => {
 		expect(asked).toEqual([undefined])
 	})
 
+	it('should take the parts an event carries, without reading', async () => {
+		const { stream, asked } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		await pots.apply({ entry: pot('b', 1) })
+		await pots.apply({ removed: 'a' })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+		expect(asked).toEqual([undefined])
+	})
+
+	it('should not bring back what was removed by an older state of it', async () => {
+		const { stream } = server({
+			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		await pots.apply({ removed: 'a', VERSION: 3 })
+		await pots.apply({ entry: pot('a', 2) })
+		await pots.apply(pot('a', 3))
+
+		expect(ids(await next(pots.query('id')))).toEqual([])
+
+		// a later version is the entry again
+		await pots.apply({ entry: pot('a', 4) })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+	})
+
+	it('should not bring back what was removed with no version said, until a read does', async () => {
+		const reads: Record<string, Parts> = {
+			'': [{ entry: pot('a', 1) }, { token: 'T1' }],
+			T1: [{ token: 'T1' }]
+		}
+
+		const { stream } = server(reads)
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		await pots.remove('a')
+		await pots.apply({ entry: pot('a', 9) })
+
+		expect(ids(await next(pots.query('id')))).toEqual([])
+
+		// the read began after the entry was said to have left, and it is the collection that says
+		await new Promise((resolve) => setTimeout(resolve, 2))
+		reads.T1 = [{ entry: pot('a', 2) }, { token: 'T2' }]
+		reads.T2 = [{ token: 'T2' }]
+		await pots.sync()
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+	})
+
+	it('should keep an entry where it is said to have left at a version the copy is past', async () => {
+		const { stream } = server({
+			'': [{ entry: pot('a', 5) }, { token: 'T1', final: true }]
+		})
+
+		const pots = reflection<Pot>({ name: db, stream })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+
+		await pots.apply({ removed: 'a', VERSION: 4 })
+
+		expect(ids(await next(pots.query('id')))).toEqual(['a'])
+	})
+
+	it('should not let a read that began earlier undo what was applied meanwhile', async () => {
+		let release: () => void = () => {}
+
+		const held = new Promise<void>((resolve) => (release = resolve))
+
+		// a server that keeps no history: the read is of the whole collection, as it was when it began
+		const stream = async () =>
+			(async function* (): AsyncGenerator<StreamPart<Pot>> {
+				yield { entry: pot('a', 1) }
+				yield { entry: pot('b', 1) }
+				await held
+				yield { token: null }
+			})()
+
+		const pots = reflection<Pot>({ name: db, stream })
+		const query = pots.query('id')
+		const stop = query.subscribe(() => {})
+
+		await new Promise((resolve) => setTimeout(resolve, 5))
+
+		// made and removed after the read began: it brings neither
+		await pots.apply({ entry: pot('c', 1) })
+		await pots.apply({ removed: 'a' })
+
+		release()
+
+		expect(ids(await next(query))).toEqual(['b', 'c'])
+
+		stop()
+	})
+
 	it('should drop the copy and read the collection again when it is reset', async () => {
 		const reads: Record<string, Parts> = {
 			'': [{ entry: pot('a', 1) }, { token: 'T1', final: true }]

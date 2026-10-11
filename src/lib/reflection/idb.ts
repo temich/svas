@@ -23,9 +23,20 @@ export interface Meta {
 
 export type Indexes = Record<string, string | string[]>
 
+/** An entry that left the collection, remembered so that an older state of it does not bring it back */
+export interface Gone {
+  id: string
+  /** the version it left at, where whoever said so knew it: a later one is the entry again */
+  version?: number
+  /** when it was said: a read that began before may still hold the entry */
+  at: number
+}
+
 const ENTRIES = 'entries'
+const GONE = 'gone'
 const META = 'meta'
 const KEY = 'meta'
+const VERSION = 2
 
 /**
  * The database of a reflection, made with its indexes. A database made with other indexes is
@@ -102,9 +113,10 @@ export class Database {
    * Applies what one read yielded, and the token it ended with, as one transaction: a read is
    * kept whole or not at all. Answers what changed.
    */
-  public async apply<T extends Comparable>(parts: Array<Part<T>>, meta: Meta): Promise<Array<Change<T>>> {
-    const tx = this.db.transaction([ENTRIES, META], 'readwrite')
+  public async apply<T extends Comparable>(parts: Array<Part<T>>, meta: Meta, started: number): Promise<Array<Change<T>>> {
+    const tx = this.db.transaction([ENTRIES, GONE, META], 'readwrite')
     const entries = tx.objectStore(ENTRIES)
+    const gone = tx.objectStore(GONE)
     const changes: Array<Change<T>> = []
 
     for (const part of parts) {
@@ -112,15 +124,31 @@ export class Database {
       const held = (await done(entries.get(id))) as Stored<T> | undefined
 
       if ('removed' in part) {
+        gone.delete(id)
+
         if (held === undefined) continue
 
         entries.delete(id)
         changes.push({ id, before: held.value })
-      } else if (held === undefined || held.value.VERSION < part.entry.VERSION) {
+
+        continue
+      }
+
+      const left = (await done(gone.get(id))) as Gone | undefined
+
+      // the read began before the entry was said to have left, and may not know of it
+      if (left !== undefined && left.at >= started && !later(part.entry, left)) continue
+
+      if (left !== undefined) gone.delete(id)
+
+      if (held === undefined || held.value.VERSION < part.entry.VERSION) {
         entries.put({ id, value: part.entry, g: meta.generation })
         changes.push({ id, before: held?.value, after: part.entry })
       } else entries.put({ ...held, g: meta.generation })
     }
+
+    // what a read that began later did not bring back is gone for it as well
+    await sweep<Gone>(gone.index('at'), IDBKeyRange.upperBound(started, true))
 
     tx.objectStore(META).put(meta, KEY)
 
@@ -132,25 +160,26 @@ export class Database {
   }
 
   /**
-   * An entry the application was given, as a write answers the state it made: kept where its
-   * `VERSION` is higher than the copy's, and taken out where it is `DELETED`.
+   * An entry the application was given, as a write answers the state it made or an event tells
+   * of it: kept where its `VERSION` is higher than the copy's, and taken out where it is
+   * `DELETED`. One that left the collection since is not brought back by an older state of it.
+   * `generation` is the read the entry is found by, so that one in flight does not sweep it.
    */
-  public async put<T extends Comparable>(entry: T): Promise<Array<Change<T>>> {
-    const tx = this.db.transaction(ENTRIES, 'readwrite')
+  public async put<T extends Comparable>(entry: T, generation: number): Promise<Array<Change<T>>> {
+    if (entry.DELETED !== null && entry.DELETED !== undefined) return await this.drop<T>(entry.id, entry.VERSION)
+
+    const tx = this.db.transaction([ENTRIES, GONE], 'readwrite')
     const entries = tx.objectStore(ENTRIES)
+    const gone = tx.objectStore(GONE)
     const held = (await done(entries.get(entry.id))) as Stored<T> | undefined
+    const left = (await done(gone.get(entry.id))) as Gone | undefined
     const changes: Array<Change<T>> = []
 
-    if (held === undefined || held.value.VERSION < entry.VERSION) {
-      if (entry.DELETED !== null && entry.DELETED !== undefined) {
-        if (held !== undefined) {
-          entries.delete(entry.id)
-          changes.push({ id: entry.id, before: held.value })
-        }
-      } else {
-        entries.put({ id: entry.id, value: entry, g: held?.g ?? this.meta.generation })
-        changes.push({ id: entry.id, before: held?.value, after: entry })
-      }
+    if ((left === undefined || later(entry, left)) && (held === undefined || held.value.VERSION < entry.VERSION)) {
+      if (left !== undefined) gone.delete(entry.id)
+
+      entries.put({ id: entry.id, value: entry, g: Math.max(held?.g ?? 0, generation) })
+      changes.push({ id: entry.id, before: held?.value, after: entry })
     }
 
     await committed(tx)
@@ -158,51 +187,48 @@ export class Database {
     return changes
   }
 
-  /** Takes an entry out, as the application says it left the collection. */
-  public async drop<T>(id: string): Promise<Array<Change<T>>> {
-    const tx = this.db.transaction(ENTRIES, 'readwrite')
+  /**
+   * Takes an entry out, as the application says it left the collection, and remembers that it
+   * did. Told the `version` it left at, an entry the copy holds at that version or a later one
+   * stays: what is said is older than what is held.
+   */
+  public async drop<T extends Comparable>(id: string, version?: number): Promise<Array<Change<T>>> {
+    const tx = this.db.transaction([ENTRIES, GONE], 'readwrite')
     const entries = tx.objectStore(ENTRIES)
+    const gone = tx.objectStore(GONE)
     const held = (await done(entries.get(id))) as Stored<T> | undefined
+    const stale = held !== undefined && version !== undefined && held.value.VERSION >= version
 
-    if (held !== undefined) entries.delete(id)
+    if (!stale) {
+      const left: Gone = { id, at: Date.now() }
+
+      if (version !== undefined) left.version = version
+
+      gone.put(left)
+
+      if (held !== undefined) entries.delete(id)
+    }
 
     await committed(tx)
 
-    return held === undefined ? [] : [{ id, before: held.value }]
+    return held === undefined || stale ? [] : [{ id, before: held.value }]
   }
 
   /** Deletes what a read of the whole collection did not find. */
   public async sweep<T>(generation: number): Promise<Array<Change<T>>> {
     const tx = this.db.transaction(ENTRIES, 'readwrite')
-    const index = tx.objectStore(ENTRIES).index('g')
-    const changes: Array<Change<T>> = []
-
-    await new Promise<void>((resolve, reject) => {
-      const request = index.openCursor(IDBKeyRange.upperBound(generation, true))
-
-      request.onerror = () => reject(request.error)
-      request.onsuccess = () => {
-        const cursor = request.result
-
-        if (cursor === null) return resolve()
-
-        const stored = cursor.value as Stored<T>
-
-        changes.push({ id: stored.id, before: stored.value })
-        cursor.delete()
-        cursor.continue()
-      }
-    })
+    const swept = await sweep<Stored<T>>(tx.objectStore(ENTRIES).index('g'), IDBKeyRange.upperBound(generation, true))
 
     await committed(tx)
 
-    return changes
+    return swept.map((stored) => ({ id: stored.id, before: stored.value }))
   }
 
   public async clear(meta: Meta): Promise<void> {
-    const tx = this.db.transaction([ENTRIES, META], 'readwrite')
+    const tx = this.db.transaction([ENTRIES, GONE, META], 'readwrite')
 
     tx.objectStore(ENTRIES).clear()
+    tx.objectStore(GONE).clear()
     tx.objectStore(META).put(meta, KEY)
 
     await committed(tx)
@@ -215,7 +241,8 @@ export class Database {
   }
 }
 
-export type Part<T> = { entry: T } | { removed: string }
+/** `VERSION` beside `removed` is the version the entry left at, where whoever says so knows it */
+export type Part<T> = { entry: T } | { removed: string; VERSION?: number }
 
 export interface Change<T> {
   id: string
@@ -223,23 +250,55 @@ export interface Change<T> {
   after?: T
 }
 
+/** Whether the entry is of a later version than the one it left at: where that is not known, it is not */
+function later(entry: Comparable, left: Gone): boolean {
+  return left.version !== undefined && entry.VERSION > left.version
+}
+
+async function sweep<T>(source: IDBIndex, range: IDBKeyRange): Promise<T[]> {
+  const swept: T[] = []
+
+  await new Promise<void>((resolve, reject) => {
+    const request = source.openCursor(range)
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const cursor = request.result
+
+      if (cursor === null) return resolve()
+
+      swept.push(cursor.value as T)
+      cursor.delete()
+      cursor.continue()
+    }
+  })
+
+  return swept
+}
+
 function database(name: string): string {
   return `svas:${name}`
 }
 
 async function connect(name: string, indexes: Indexes): Promise<IDBDatabase> {
-  const request = indexedDB.open(database(name), 1)
+  const request = indexedDB.open(database(name), VERSION)
 
   request.onupgradeneeded = () => {
     const db = request.result
-    const entries = db.createObjectStore(ENTRIES, { keyPath: 'id' })
 
-    entries.createIndex('g', 'g')
+    // a database of the version before has all but what is remembered of the entries that left
+    if (!db.objectStoreNames.contains(ENTRIES)) {
+      const entries = db.createObjectStore(ENTRIES, { keyPath: 'id' })
 
-    for (const [name, path] of Object.entries(indexes))
-      entries.createIndex(name, Array.isArray(path) ? path.map(valued) : valued(path))
+      entries.createIndex('g', 'g')
 
-    db.createObjectStore(META)
+      for (const [name, path] of Object.entries(indexes))
+        entries.createIndex(name, Array.isArray(path) ? path.map(valued) : valued(path))
+
+      db.createObjectStore(META)
+    }
+
+    db.createObjectStore(GONE, { keyPath: 'id' }).createIndex('at', 'at')
   }
 
   return await done(request)
