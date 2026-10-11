@@ -1,3 +1,10 @@
+# [3.3.0](https://github.com/temich/svas/compare/v3.2.0...v3.3.0) (2026-10-11)
+
+
+### Features
+
+* **reflection:** a change is applied as a part, and what was removed is remembered ([9b63053](https://github.com/temich/svas/commit/9b6305344d173ed1d4047a5a397b60273f81f7a3))
+
 # [3.2.0](https://github.com/temich/svas/compare/v3.1.1...v3.2.0) (2026-10-10)
 
 

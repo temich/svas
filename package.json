@@ -1,6 +1,6 @@
 {
 	"name": "svas",
-	"version": "3.2.0",
+	"version": "3.3.0",
 	"repository": "https://github.com/temich/svas",
 	"scripts": {
 		"dev": "vite dev",
