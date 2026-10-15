@@ -1,3 +1,16 @@
+# [4.0.0](https://github.com/temich/svas/compare/v3.3.0...v4.0.0) (2026-10-15)
+
+
+* feat!: `Async` shows nothing on an error, unless the app says what ([177e820](https://github.com/temich/svas/commit/177e8208665507599315b00981ba993749792f2f))
+
+
+### BREAKING CHANGES
+
+* `Async` renders nothing while the store holds an error and
+no `error` snippet is given.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
 # [3.3.0](https://github.com/temich/svas/compare/v3.2.0...v3.3.0) (2026-10-11)
 
 
