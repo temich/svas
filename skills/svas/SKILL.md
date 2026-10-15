@@ -136,7 +136,7 @@ await once(store, (v) => v === 'ready')   // first value satisfying a condition
 </Async>
 ```
 
-Props: `store` (required), `awaited` snippet (required), optional `waiting` / `error` snippets, `silent` (suppress the default error UI). Combine with `combined` to await several at once.
+Props: `store` (required), `awaited` snippet (required), optional `waiting` / `error` snippets — nothing is rendered for a state whose snippet is not given. Combine with `combined` to await several at once.
 
 ### `combined(...stores)`
 
