@@ -1,3 +1,11 @@
+## [4.0.1](https://github.com/temich/svas/compare/v4.0.0...v4.0.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* a server renders what a store holds and fetches nothing ([167d983](https://github.com/temich/svas/commit/167d98361836a02a1bd4c08be9d21988202df2fb))
+* **reflection:** a server renders what the copy holds and requests no entry ([c726ed9](https://github.com/temich/svas/commit/c726ed9d0efe7c3f788cca403b71ce4df01fb863))
+
 # [4.0.0](https://github.com/temich/svas/compare/v3.3.0...v4.0.0) (2026-10-15)
 
 
