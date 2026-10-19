@@ -41,7 +41,10 @@ export class Value<T> implements Writable<T | null> {
   }
 
   public subscribe(run: Subscriber<T | null>, invalidate?: () => void): Unsubscriber {
-    this.sync()
+    // a server renders what the store holds: it cannot wait for a request, and a store is shared by
+    // every request the server renders
+    if (typeof window !== 'undefined')
+      this.sync()
 
     return this.store.subscribe(run, invalidate)
   }

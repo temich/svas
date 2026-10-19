@@ -61,7 +61,9 @@ class Values<T, E extends Error = Error> {
 
     const value = (this.values[key] ??= this.create())
 
-    if (this.fetch === undefined || options?.fetch === false) return value.store
+    // a server renders what the store holds, as `Value` does
+    if (this.fetch === undefined || options?.fetch === false || typeof window === 'undefined')
+      return value.store
 
     const stale = value.timestamp === 0 || value.timestamp + this.revalidate < Date.now()
 

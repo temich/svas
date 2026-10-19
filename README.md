@@ -47,6 +47,7 @@ All async stores expose their state as `Maybe<T, E> = null | T | E` where `E ext
 Stores share a common lifecycle:
 
 - Fetch is triggered lazily on first `subscribe`
+- A server renders what a store holds and fetches nothing: it cannot wait for the request, and a store is shared by every request the server renders. Data a server-rendered page needs comes from its `load`
 - Revalidation happens automatically after `revalidate` ms (default `300_000`)
 - `stale: true` keeps the previous value visible while revalidating
 - `bind: Readable<unknown | null>` nullifies the store when the bound store becomes `null` (useful for tying data to a session/user)
