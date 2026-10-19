@@ -31,7 +31,10 @@ export class Collection<T extends Identifiable, E extends Error = Error> impleme
   }
 
   public subscribe(run: Subscriber<Maybe<T[], E>>, invalidate?: () => void): Unsubscriber {
-    this.sync()
+    // a server renders what the store holds: it cannot wait for a request, and a store is shared by
+    // every request the server renders
+    if (typeof window !== 'undefined')
+      this.sync()
 
     return this.store.subscribe(run, invalidate)
   }

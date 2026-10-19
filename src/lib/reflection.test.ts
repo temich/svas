@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { get, writable, type Readable } from 'svelte/store'
 import { reflection, expired, type StreamPart } from './reflection'
 import type { Maybe } from './Maybe'
@@ -60,6 +60,11 @@ describe('reflection', () => {
 
 	beforeEach(() => {
 		db = name()
+		;(globalThis as { window?: unknown }).window = globalThis
+	})
+
+	afterEach(() => {
+		delete (globalThis as { window?: unknown }).window
 	})
 
 	it('should read the collection in pages, then what changed, and answer queries from the copy', async () => {
@@ -616,5 +621,29 @@ describe('reflection', () => {
 		const pots = reflection<Pot>({ name: db, stream: async () => expired })
 
 		expect(() => pots.query('type')).toThrow(/not declared/)
+	})
+
+	it('should not fall back to the request on a server', async () => {
+		delete (globalThis as { window?: unknown }).window
+
+		const fetched: string[] = []
+
+		const pots = reflection<Pot>({
+			name: db,
+			stream: async () => expired,
+			get: async (id) => {
+				fetched.push(id)
+
+				return pot(id, 1)
+			}
+		})
+
+		const one = pots.get('a')
+		const unsubscribe = one.subscribe(() => {})
+
+		await new Promise((resolve) => setTimeout(resolve, 10))
+		unsubscribe()
+
+		expect(fetched).toEqual([])
 	})
 })

@@ -322,6 +322,9 @@ export class Reflection<T extends Comparable> {
       return
     }
 
+    // a server renders what the copy holds, as a `value` does
+    if (typeof window === 'undefined') return
+
     let fallback = this.fallbacks.get(entry.id)
 
     if (fallback === undefined) {
