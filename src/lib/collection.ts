@@ -105,8 +105,10 @@ export class Collection<T extends Identifiable, E extends Error = Error> impleme
     const stale = this.timestamp === 0 || this.timestamp + this.revalidate < Date.now()
 
     if (stale) {
+      // emptied after the read rather than by it, as `Values` does: a subscription made by a
+      // template may not change a store
       if (!this.stale)
-        this.clear()
+        queueMicrotask(() => this.empty())
 
       void this.refresh()
     }
@@ -195,9 +197,14 @@ export class Collection<T extends Identifiable, E extends Error = Error> impleme
   }
 
   private clear(): void {
+    this.empty()
+    this.timestamp = 0
+  }
+
+  /** What it holds dropped, while the request that `sync` made goes on */
+  private empty(): void {
     this.store.set(null)
     this.values?.clear()
-    this.timestamp = 0
   }
 }
 
