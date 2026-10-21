@@ -68,7 +68,9 @@ class Values<T, E extends Error = Error> {
     const stale = value.timestamp === 0 || value.timestamp + this.revalidate < Date.now()
 
     if (stale) {
-      if (!this.stale) value.store.set(null)
+      // emptied after the read rather than by it: a read made by a template or a `$derived` may
+      // not change a store, which Svelte refuses (`state_unsafe_mutation`)
+      if (!this.stale) queueMicrotask(() => value.store.set(null))
 
       value.timestamp = Date.now()
       this.fetch(key).then((data) => this.set(key, data))
