@@ -1,3 +1,10 @@
+## [4.0.2](https://github.com/temich/svas/compare/v4.0.1...v4.0.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* a stale read changes no store as it reads ([a665881](https://github.com/temich/svas/commit/a6658817e005adf8359784449c5fc1894e7d2b64))
+
 ## [4.0.1](https://github.com/temich/svas/compare/v4.0.0...v4.0.1) (2026-10-19)
 
 
