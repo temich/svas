@@ -56,4 +56,45 @@ describe('in a browser', () => {
 		expect(calls.count).toBe(1)
 		expect(get(store)).toBe(1)
 	})
+
+	// a template or a `$derived` reads a store: what it reads may not change as it reads, which
+	// Svelte refuses (`state_unsafe_mutation`) and stops the page's updates
+	it('values read stale are emptied after the read, not by it', async () => {
+		;(globalThis as { window?: unknown }).window = globalThis
+
+		const store = values<number>({ get: async () => 2, revalidate: 0 })
+
+		store.set('a', 1)
+
+		const read = store.get('a')
+
+		expect(get(read)).toBe(1)
+
+		await Promise.resolve()
+
+		expect(get(read)).toBe(2)
+	})
+
+	it('a collection read stale is emptied after the read, not by it', async () => {
+		;(globalThis as { window?: unknown }).window = globalThis
+
+		const { calls, request } = counted([{ id: 'b' }])
+		const items = collection({ get: request, revalidate: 0 })
+
+		items.replace([{ id: 'a' }])
+		await new Promise((resolve) => setTimeout(resolve, 2))
+
+		let seen: unknown = undefined
+		const unsubscribe = items.subscribe((value) => (seen = value))
+
+		expect(seen).toEqual([{ id: 'a' }])
+
+		await Promise.resolve()
+		await Promise.resolve()
+
+		expect(get(items)).toEqual([{ id: 'b' }])
+		expect(calls.count).toBe(1)
+
+		unsubscribe()
+	})
 })
