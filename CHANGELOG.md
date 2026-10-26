@@ -1,3 +1,11 @@
+# [4.1.0](https://github.com/temich/svas/compare/v4.0.2...v4.1.0) (2026-10-26)
+
+
+### Features
+
+* **reflection:** a copy written on the device, pushed while sync is on ([d1053f0](https://github.com/temich/svas/commit/d1053f0517ab44192d965c60ea137e3c188d65dd))
+* **reflection:** status of the exchange ([bb5bdf6](https://github.com/temich/svas/commit/bb5bdf62efbed7acb2617d5d2b1b9ca7bc72a479))
+
 ## [4.0.2](https://github.com/temich/svas/compare/v4.0.1...v4.0.2) (2026-10-21)
 
 
