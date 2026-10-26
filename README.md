@@ -352,6 +352,7 @@ const nodes = reflection<Node>({
 await nodes.write(id, { content: 'Milk' })         // the copy answers it at once
 await nodes.write(id, null)                        // a deletion, hidden at once
 await account.absorb(local)                        // the entries of another copy, written into this one
+nodes.status                                       // Readable<{ pending, syncing, synced, error }>
 ```
 
 - `write(id, set)` writes fields of an entry, or deletes it with `null`. The copy answers the
@@ -372,6 +373,9 @@ await account.absorb(local)                        // the entries of another cop
 - Queries answer from the copy from the start, whole or not: it is the device's first.
 - `absorb(source)` writes the entries of another copy into this one, as written on the device, and
   deletes that copy — what was kept without an account, brought into one.
+- `status` is a store of how the exchange goes: `pending`, how many entries wait to be sent;
+  `syncing`; `synced`, when the last exchange ended well (`null`: not since the page loaded); and
+  `error`, what the last one failed with.
 
 ## Utilities
 

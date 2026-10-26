@@ -793,6 +793,26 @@ describe('a reflection written on the device', () => {
 		expect(await next(pots.get('a'))).toMatchObject({ title: 'mine', VERSION: 1 })
 	})
 
+	it('should tell what waits to be sent, and how the last exchange ended', async () => {
+		const { stream } = empty()
+		const { push, fail } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		fail(new Error('offline'))
+		await pots.write('a', { title: 'mine' })
+		await pots.write('b', { title: 'yours' })
+
+		expect(await next(pots.status, (status) => status.pending === 2)).toMatchObject({ synced: null, error: null })
+
+		await pots.sync()
+		expect(await next(pots.status)).toMatchObject({ pending: 2, syncing: false, error: { message: 'offline' } })
+
+		fail(null)
+
+		await pots.sync()
+		expect(await next(pots.status)).toMatchObject({ pending: 0, syncing: false, error: null, synced: expect.any(Number) })
+	})
+
 	it('should keep a write made while a push was on its way, over the state it answered', async () => {
 		const { stream } = empty()
 		const { push: merge } = merging()

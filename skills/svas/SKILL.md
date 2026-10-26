@@ -214,6 +214,7 @@ const nodes = reflection<Node>({
 await nodes.write(id, { content: 'Milk' }) // answered at once; pushed once writing pauses, and on `sync`
 await nodes.write(id, null)                // a deletion
 await account.absorb(local)                // another copy's entries, written into this one; that copy is deleted
+nodes.status                                // Readable<{ pending, syncing, synced, error }>: the exchange
 ```
 
 What was written stays over every state the server streams or tells of until a push answers it;

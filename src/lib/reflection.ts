@@ -1,4 +1,4 @@
-import { readable, type Readable, type Subscriber } from 'svelte/store'
+import { readable, writable, type Readable, type Subscriber, type Writable } from 'svelte/store'
 import { open, remove, type Change, type Database, type Indexes, type Meta, type Part, type Push } from './reflection/idb'
 import type { Maybe } from './Maybe'
 import type { Comparable } from './sync'
@@ -44,6 +44,17 @@ export class Reflection<T extends Comparable> {
 
   /** the push that waits for writing to pause */
   private pushing: ReturnType<typeof setTimeout> | null = null
+
+  private readonly state: Writable<Status> = writable({ pending: 0, syncing: false, synced: null, error: null })
+
+  /** How the exchange with the server goes: what waits to be sent, and how the last one ended */
+  public readonly status: Readable<Status> = readable<Status>(undefined, (set) => {
+    void this.db().then(async (db) => {
+      if (db !== null && this.options.push !== undefined) await this.count(db)
+    })
+
+    return this.state.subscribe(set)
+  })
 
   public constructor(options: Options<T>) {
     this.options = options
@@ -224,9 +235,18 @@ export class Reflection<T extends Comparable> {
       return await this.queued
     }
 
+    this.state.update((state) => ({ ...state, syncing: true }))
+
     this.syncing = this.locked()
       .then(async (result) => {
         if (result instanceof Error) await this.failed(result)
+
+        this.state.update((state) => ({
+          ...state,
+          syncing: false,
+          synced: result === null ? Date.now() : state.synced,
+          error: result
+        }))
 
         return result
       })
@@ -409,6 +429,12 @@ export class Reflection<T extends Comparable> {
     for (const query of this.queries) query.set(error)
   }
 
+  private async count(db: Database): Promise<void> {
+    const pending = await db.waiting()
+
+    this.state.update((state) => (state.pending === pending ? state : { ...state, pending }))
+  }
+
   private async db(): Promise<Database | null> {
     if (!available()) return null
 
@@ -459,7 +485,11 @@ export class Reflection<T extends Comparable> {
 
   /** Re-reads the queries and entries a change touches, whichever tab read it. */
   private async changed(message: Message<T>): Promise<void> {
-    await (await this.db())?.reload()
+    const db = await this.db()
+
+    await db?.reload()
+
+    if (db !== null && this.options.push !== undefined) await this.count(db)
 
     if (message.all === true) return await this.refresh()
     if (message.changes === undefined) return
@@ -513,6 +543,17 @@ export function reflection<T extends Comparable>(options: Options<T>): Reflectio
  * read follows to find that out.
  */
 export type StreamPart<T> = Part<T> | { token: string | null; final?: boolean }
+
+export interface Status {
+  /** How many entries hold what was written on the device and the server has not confirmed */
+  pending: number
+  /** Whether an exchange is in flight */
+  syncing: boolean
+  /** When the last exchange ended without an error; null: none has, since the page loaded */
+  synced: number | null
+  /** What the last exchange failed with; null where it did not */
+  error: Error | null
+}
 
 export interface Options<T> {
   /** The IndexedDB database the copy is kept in, as `svas:<name>`. */

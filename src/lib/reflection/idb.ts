@@ -139,6 +139,18 @@ export class Database {
     return [{ id, before: held?.value, after }]
   }
 
+  /** How many entries hold what the device wrote and the server has not confirmed */
+  public async waiting(): Promise<number> {
+    const tx = this.db.transaction(ENTRIES, 'readonly')
+
+    return await new Promise<number>((resolve, reject) => {
+      const request = tx.objectStore(ENTRIES).index('p').count(IDBKeyRange.only(1))
+
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => resolve(request.result)
+    })
+  }
+
   /** What the device wrote and the server has not confirmed: up to `limit` entries, as they are stored */
   public async pending<T>(limit: number): Promise<Array<Stored<T>>> {
     const tx = this.db.transaction(ENTRIES, 'readonly')
