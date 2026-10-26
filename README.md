@@ -263,6 +263,8 @@ class Reflection<T extends Comparable> {
   reset(): Promise<Error | null>
   sync(): Promise<Error | null>
   empty(): Promise<void>
+  write(id, set: Partial<T> | null): Promise<void>
+  absorb(source: Reflection<T>): Promise<void>
 }
 ```
 
@@ -277,6 +279,11 @@ Options:
 - `get?: (id) => Promise<Maybe<T>>` — an entry the copy does not hold
 - `indexes?: Record<string, string | string[]>` — by name: a property, or a list of them
 - `bind?: Readable<unknown | null>` — deletes the copy when the bound store is `null`
+- `push?: (changes: Push<T>[]) => Promise<T[] | Error>` — sends what was written on the device;
+  given, the copy is written with `write` (see [Written on the device](#written-on-the-device))
+- `sync?: Readable<boolean>` — whether the copy is exchanged with the server; on where not given
+- `batch?: number` — how many changes a push sends at most, 100 by default
+- `delay?: number` — how long writing pauses before it is pushed, 1000 ms by default
 
 The copy is read on the first subscription, and from then on it is kept by what the application
 is told: an event that carries a change is applied, and nothing is read for it. `sync()` reads
@@ -327,6 +334,48 @@ says so on the token, `{ token, final: true }`, and no read follows.
 A read is kept whole or not at all: one that ends without a token was cut, and the next `sync`
 reads it again. A token the server no longer continues from drops the copy, which is read again.
 One tab reads at a time, and the others take what it read.
+
+#### Written on the device
+
+Given `push`, a reflection is local-first: the device writes it, offline or not, and the server is
+told when there is one to tell.
+
+```ts
+const nodes = reflection<Node>({
+  name: `nodes:${identity ?? 'local'}`,           // a copy per account, and one without
+  stream: (token) => net.stream(token),
+  push: (changes) => net.merge(changes),           // [{ id, base, set }] → the entries after the merge
+  sync: syncing,                                   // Readable<boolean>: off, nothing is read or sent
+  indexes: { parent: 'parent' }
+})
+
+await nodes.write(id, { content: 'Milk' })         // the copy answers it at once
+await nodes.write(id, null)                        // a deletion, hidden at once
+await account.absorb(local)                        // the entries of another copy, written into this one
+nodes.status                                       // Readable<{ pending, syncing, synced, error }>
+```
+
+- `write(id, set)` writes fields of an entry, or deletes it with `null`. The copy answers the
+  server's state with what was written over it, at once; an entry the server never had is made, and
+  one it never had, deleted, is simply gone.
+- What was written goes to `push` once writing pauses (`delay`, a second by default), in batches of
+  `batch` (100), and on every `sync`, before what changed is read: each change with `base`, the
+  `VERSION` it was written over, and the fields — `null` for a deletion. The server decides; it
+  answers the entries as they are after, and that is the state. A change it answers nothing for
+  was refused, and is dropped.
+- A state the stream brings or an event tells of, newer than the copy's, is taken under what was
+  written: what the device wrote stays over it until it is pushed. Written again while a push is on
+  its way, an entry keeps the newer write over the state that push answered.
+- A push that fails keeps what was written, and is tried again on the next `sync`; what changed is
+  read all the same. A copy dropped and read again keeps what was written as well.
+- `sync: Readable<boolean>` turns the exchange on and off. Off, nothing is read or sent, and the
+  copy is the device's alone; turned on, what was written goes, then what changed comes.
+- Queries answer from the copy from the start, whole or not: it is the device's first.
+- `absorb(source)` writes the entries of another copy into this one, as written on the device, and
+  deletes that copy — what was kept without an account, brought into one.
+- `status` is a store of how the exchange goes: `pending`, how many entries wait to be sent;
+  `syncing`; `synced`, when the last exchange ended well (`null`: not since the page loaded); and
+  `error`, what the last one failed with.
 
 ## Utilities
 

@@ -1,15 +1,22 @@
-import { readable, type Readable, type Subscriber } from 'svelte/store'
-import { open, remove, type Change, type Database, type Indexes, type Meta, type Part } from './reflection/idb'
+import { readable, writable, type Readable, type Subscriber, type Writable } from 'svelte/store'
+import { open, remove, type Change, type Database, type Indexes, type Meta, type Part, type Push } from './reflection/idb'
 import type { Maybe } from './Maybe'
 import type { Comparable } from './sync'
 
 /** What `stream` answers where the server no longer continues from the token it was given. */
 export const expired: unique symbol = Symbol('expired')
 
+/** Fields that are the server's, which a copy moved into another does not carry over as written */
+const SYSTEM = new Set(['id', 'VERSION', 'CREATED', 'UPDATED', 'DELETED', 'REGION'])
+
 /**
  * A copy of a collection a server streams, kept in IndexedDB and kept current. It reads the
  * collection once, and from then on what changed in it, from the token the last read ended with.
  * Queries answer from the copy.
+ *
+ * Given `push`, it is written on the device too: `write` changes the copy at once, offline or not,
+ * and what was written goes to the server with the `VERSION` it was written over, while `sync` is
+ * on. What the server answers is the state; until then, what was written stays over it.
  */
 export class Reflection<T extends Comparable> {
   private readonly options: Options<T>
@@ -32,6 +39,23 @@ export class Reflection<T extends Comparable> {
   /** the generation of the read in flight: what is applied meanwhile is found by it */
   private reading: number | null = null
 
+  /** whether the copy is exchanged with the server: always, unless `sync` says otherwise */
+  private enabled = true
+
+  /** the push that waits for writing to pause */
+  private pushing: ReturnType<typeof setTimeout> | null = null
+
+  private readonly state: Writable<Status> = writable({ pending: 0, syncing: false, synced: null, error: null })
+
+  /** How the exchange with the server goes: what waits to be sent, and how the last one ended */
+  public readonly status: Readable<Status> = readable<Status>(undefined, (set) => {
+    void this.db().then(async (db) => {
+      if (db !== null && this.options.push !== undefined) await this.count(db)
+    })
+
+    return this.state.subscribe(set)
+  })
+
   public constructor(options: Options<T>) {
     this.options = options
     this.indexes = options.indexes ?? {}
@@ -48,6 +72,49 @@ export class Reflection<T extends Comparable> {
     options.bind?.subscribe((value) => {
       if (value === null) void this.clear()
     })
+
+    // turned on, what was written goes, and what changed comes; turned off, nothing is exchanged
+    options.sync?.subscribe((on) => {
+      this.enabled = on
+
+      if (on && this.started) void this.sync()
+    })
+  }
+
+  /**
+   * Writes fields of an entry on the device, or deletes it with `null`: the copy answers them at
+   * once, and they go to the server while `sync` is on. An entry the copy does not hold is made.
+   */
+  public async write(id: string, set: Partial<T> | null): Promise<void> {
+    if (this.options.push === undefined) throw new Error('Reflection: a copy without `push` is not written')
+
+    const db = await this.db()
+
+    if (db === null) return
+
+    const changes = await db.write<T>(id, set)
+
+    await this.changed({ changes })
+    this.broadcast({ changes })
+    this.schedule()
+  }
+
+  /**
+   * Writes the entries of another copy into this one, as written on the device, and deletes that
+   * copy: what was kept without an account goes into the account's.
+   */
+  public async absorb(source: Reflection<T>): Promise<void> {
+    const from = await source.db()
+
+    if (from === null) return
+
+    for (const entry of await from.all<T>()) {
+      const fields = Object.fromEntries(Object.entries(entry).filter(([key]) => !SYSTEM.has(key)))
+
+      await this.write(entry.id, fields as Partial<T>)
+    }
+
+    await source.clear()
   }
 
   /**
@@ -154,7 +221,7 @@ export class Reflection<T extends Comparable> {
    * reads at a time; the others learn what it read.
    */
   public async sync(): Promise<Error | null> {
-    if (!available()) return null
+    if (!available() || !this.enabled) return null
 
     // a read in flight began before this call, and may miss what the caller knows has changed:
     // one more starts after it, and every call made meanwhile waits for that one
@@ -168,9 +235,18 @@ export class Reflection<T extends Comparable> {
       return await this.queued
     }
 
+    this.state.update((state) => ({ ...state, syncing: true }))
+
     this.syncing = this.locked()
       .then(async (result) => {
         if (result instanceof Error) await this.failed(result)
+
+        this.state.update((state) => ({
+          ...state,
+          syncing: false,
+          synced: result === null ? Date.now() : state.synced,
+          error: result
+        }))
 
         return result
       })
@@ -189,10 +265,71 @@ export class Reflection<T extends Comparable> {
     void this.sync()
   }
 
-  private async locked(): Promise<Error | null> {
-    if (typeof navigator === 'undefined' || navigator.locks === undefined) return await this.read()
+  /** What was written goes once writing pauses, as a key is held or a list is typed */
+  private schedule(): void {
+    if (!this.enabled) return
 
-    return await navigator.locks.request(`svas:${this.options.name}`, async () => await this.read())
+    if (this.pushing !== null) clearTimeout(this.pushing)
+
+    this.pushing = setTimeout(() => {
+      this.pushing = null
+      void this.sync()
+    }, this.options.delay ?? 1000)
+  }
+
+  /**
+   * What was written goes first, then what changed comes: one tab at a time. A push refused does not
+   * keep what changed from coming, and is tried again on the next `sync`
+   */
+  private async locked(): Promise<Error | null> {
+    const work = async () => {
+      const pushed = await this.push()
+      const read = await this.read()
+
+      return pushed ?? read
+    }
+
+    if (typeof navigator === 'undefined' || navigator.locks === undefined) return await work()
+
+    return await navigator.locks.request(`svas:${this.options.name}`, work)
+  }
+
+  /** Sends what was written, a batch at a time, and takes what the server answers as the state */
+  private async push(): Promise<Error | null> {
+    const push = this.options.push
+
+    if (push === undefined) return null
+
+    const db = await this.db()
+
+    if (db === null) return null
+
+    while (true) {
+      const sent = await db.pending<T>(this.options.batch ?? 100)
+
+      if (sent.length === 0) return null
+
+      const changes: Array<Push<T>> = sent.map((record) => ({
+        id: record.id,
+        base: record.base ?? 0,
+        set: record.removed === true ? null : (record.pending ?? {})
+      }))
+
+      let answered: T[] | Error
+
+      try {
+        answered = await push(changes)
+      } catch (error) {
+        answered = error instanceof Error ? error : new Error(String(error))
+      }
+
+      if (answered instanceof Error) return answered
+
+      const confirmed = await db.confirm<T>(sent, answered)
+
+      await this.changed({ changes: confirmed })
+      this.broadcast({ changes: confirmed })
+    }
   }
 
   private async read(): Promise<Error | null> {
@@ -286,9 +423,16 @@ export class Reflection<T extends Comparable> {
   private async failed(error: Error): Promise<void> {
     const db = await this.db()
 
-    if (db === null || db.meta.complete) return
+    // a copy written on the device answers what it holds, as it always does
+    if (db === null || db.meta.complete || this.options.push !== undefined) return
 
     for (const query of this.queries) query.set(error)
+  }
+
+  private async count(db: Database): Promise<void> {
+    const pending = await db.waiting()
+
+    this.state.update((state) => (state.pending === pending ? state : { ...state, pending }))
   }
 
   private async db(): Promise<Database | null> {
@@ -302,7 +446,8 @@ export class Reflection<T extends Comparable> {
   private async run(query: Query<T>): Promise<void> {
     const db = await this.db()
 
-    if (db === null || !db.meta.complete) return
+    // a copy written on the device answers what it holds from the start: it is the device's first
+    if (db === null || (!db.meta.complete && this.options.push === undefined)) return
 
     const order = query.options?.order === 'desc' ? 'prev' : 'next'
     const values = await db.range<T>(query.index, query.range, order, query.options?.limit)
@@ -317,7 +462,7 @@ export class Reflection<T extends Comparable> {
     if (held !== undefined) return entry.set(held)
 
     if (this.options.get === undefined) {
-      if (db?.meta.complete === true) entry.set(null)
+      if (db?.meta.complete === true || this.options.push !== undefined) entry.set(null)
 
       return
     }
@@ -340,7 +485,11 @@ export class Reflection<T extends Comparable> {
 
   /** Re-reads the queries and entries a change touches, whichever tab read it. */
   private async changed(message: Message<T>): Promise<void> {
-    await (await this.db())?.reload()
+    const db = await this.db()
+
+    await db?.reload()
+
+    if (db !== null && this.options.push !== undefined) await this.count(db)
 
     if (message.all === true) return await this.refresh()
     if (message.changes === undefined) return
@@ -395,6 +544,17 @@ export function reflection<T extends Comparable>(options: Options<T>): Reflectio
  */
 export type StreamPart<T> = Part<T> | { token: string | null; final?: boolean }
 
+export interface Status {
+  /** How many entries hold what was written on the device and the server has not confirmed */
+  pending: number
+  /** Whether an exchange is in flight */
+  syncing: boolean
+  /** When the last exchange ended without an error; null: none has, since the page loaded */
+  synced: number | null
+  /** What the last exchange failed with; null where it did not */
+  error: Error | null
+}
+
 export interface Options<T> {
   /** The IndexedDB database the copy is kept in, as `svas:<name>`. */
   name: string
@@ -421,6 +581,23 @@ export interface Options<T> {
 
   /** Deletes the copy when the bound store is `null`. */
   bind?: Readable<unknown | null>
+
+  /**
+   * Sends what was written on the device: each change with the `VERSION` it was written over, and
+   * the fields, or `null` for a deletion. Answers the entries as the server has them after it — a
+   * change it answers nothing for was refused — or an error, and what was written is sent again on
+   * the next `sync`. Given, the copy is written with `write`, and answers what it holds at once.
+   */
+  push?: (changes: Array<Push<T>>) => Promise<T[] | Error>
+
+  /** Whether the copy is exchanged with the server: off, nothing is read or sent. On where not given. */
+  sync?: Readable<boolean>
+
+  /** How many changes a push sends at most. */
+  batch?: number
+
+  /** How long writing pauses before what was written is sent, in milliseconds. */
+  delay?: number
 }
 
 /** A key, or bounds of one. */
@@ -523,4 +700,4 @@ function available(): boolean {
   return typeof indexedDB !== 'undefined'
 }
 
-export type { Meta, Part }
+export type { Meta, Part, Push }
