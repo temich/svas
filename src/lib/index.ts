@@ -1,6 +1,6 @@
 export { collection, type Collection } from './collection'
 export { values, type Values } from './values'
-export { reflection, expired, type Reflection, type StreamPart, type Part } from './reflection'
+export { reflection, expired, type Reflection, type StreamPart, type Part, type Push } from './reflection'
 export { value } from './value'
 export { awaited } from './awaited'
 export { having } from './having'

@@ -4,9 +4,32 @@ import type { Comparable } from '../sync'
 
 export interface Stored<T> {
   id: string
-  value: T
+  /**
+   * The entry as it is answered: the server's state, with what the device wrote and the server has
+   * not confirmed yet over it. Absent while a deletion the device made waits to be confirmed
+   */
+  value?: T
   /** the read that last found it, which a read of the whole collection sweeps by */
   g: number
+  /** what the device wrote and the server has not confirmed: `1` while there is any, as an index wants a key */
+  p?: 1
+  /** the server's state under what is pending; absent for an entry the server has never had */
+  server?: T
+  /** the fields written and not confirmed */
+  pending?: Partial<T>
+  /** the device deleted the entry, and the server has not confirmed it */
+  removed?: true
+  /** the `VERSION` the device had when it began writing: what the server compares the change with */
+  base?: number
+  /** counts the writes, so that one made while a push was on its way is not taken as confirmed */
+  stamp?: number
+}
+
+/** A change the device made, as it is pushed: the fields written, or `null` for a deletion */
+export interface Push<T> {
+  id: string
+  base: number
+  set: Partial<T> | null
 }
 
 export interface Meta {
@@ -36,7 +59,7 @@ const ENTRIES = 'entries'
 const GONE = 'gone'
 const META = 'meta'
 const KEY = 'meta'
-const VERSION = 2
+const VERSION = 3
 
 /**
  * The database of a reflection, made with its indexes. A database made with other indexes is
@@ -87,6 +110,110 @@ export class Database {
     return (await read<Stored<T>>(this.db, ENTRIES, id))?.value
   }
 
+  /**
+   * Writes fields of an entry, or deletes it, on the device: what is written stays over the
+   * server's state until a push confirms it. An entry the server has never had, deleted, is gone.
+   */
+  public async write<T extends Comparable>(id: string, set: Partial<T> | null): Promise<Array<Change<T>>> {
+    const tx = this.db.transaction(ENTRIES, 'readwrite')
+    const entries = tx.objectStore(ENTRIES)
+    const held = (await done(entries.get(id))) as Stored<T> | undefined
+    const server = held === undefined ? undefined : serverOf(held)
+    const base = held?.p === 1 ? (held.base ?? 0) : (server?.VERSION ?? 0)
+    const stamp = (held?.stamp ?? 0) + 1
+    const g = held?.g ?? this.meta.generation
+    let after: T | undefined
+
+    if (set === null) {
+      if (server === undefined) entries.delete(id)
+      else entries.put({ id, g, p: 1, server, pending: {}, removed: true, base, stamp } satisfies Stored<T>)
+    } else {
+      const pending = { ...(held?.removed === true ? {} : held?.pending), ...set }
+
+      after = view(id, server, pending)
+      entries.put({ id, value: after, g, p: 1, server, pending, base, stamp } satisfies Stored<T>)
+    }
+
+    await committed(tx)
+
+    return [{ id, before: held?.value, after }]
+  }
+
+  /** What the device wrote and the server has not confirmed: up to `limit` entries, as they are stored */
+  public async pending<T>(limit: number): Promise<Array<Stored<T>>> {
+    const tx = this.db.transaction(ENTRIES, 'readonly')
+    const records: Array<Stored<T>> = []
+
+    await new Promise<void>((resolve, reject) => {
+      const request = tx.objectStore(ENTRIES).index('p').openCursor(IDBKeyRange.only(1))
+
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const cursor = request.result
+
+        if (cursor === null || records.length >= limit) return resolve()
+
+        records.push(cursor.value as Stored<T>)
+        cursor.continue()
+      }
+    })
+
+    return records
+  }
+
+  /**
+   * What a push answered: the entries as the server has them after it. A write sent and not
+   * written again since is confirmed, whatever the server took of it; one written again keeps
+   * what is pending, now over the server's new state. A change the server answered nothing for was
+   * refused: it is dropped, and an entry the server has never had goes with it.
+   */
+  public async confirm<T extends Comparable>(sent: Array<Stored<T>>, answered: T[]): Promise<Array<Change<T>>> {
+    const tx = this.db.transaction(ENTRIES, 'readwrite')
+    const entries = tx.objectStore(ENTRIES)
+    const states = new Map(answered.map((entry) => [entry.id, entry]))
+    const changes: Array<Change<T>> = []
+
+    for (const record of sent) {
+      const held = (await done(entries.get(record.id))) as Stored<T> | undefined
+
+      if (held === undefined) continue
+
+      const state = states.get(record.id)
+      const server = state ?? serverOf(held)
+      const deleted = server === undefined || (server.DELETED !== null && server.DELETED !== undefined)
+
+      if (deleted) {
+        entries.delete(record.id)
+        changes.push({ id: record.id, before: held.value })
+
+        continue
+      }
+
+      const confirmed = held.stamp === record.stamp
+
+      if (confirmed || held.pending === undefined) {
+        entries.put({ id: record.id, value: server, g: held.g } satisfies Stored<T>)
+        changes.push({ id: record.id, before: held.value, after: server })
+
+        continue
+      }
+
+      const after = held.removed === true ? undefined : view(record.id, server, held.pending)
+
+      entries.put({ ...held, value: after, server, base: server.VERSION } satisfies Stored<T>)
+      changes.push({ id: record.id, before: held.value, after })
+    }
+
+    await committed(tx)
+
+    return changes
+  }
+
+  /** Every entry as it is answered, for the entries of one copy to be written into another */
+  public async all<T>(): Promise<T[]> {
+    return await this.range<T>('id', null, 'next')
+  }
+
   public async range<T>(index: string, range: IDBKeyRange | null, order: IDBCursorDirection, limit?: number): Promise<T[]> {
     const tx = this.db.transaction(ENTRIES, 'readonly')
     const source = index === 'id' ? tx.objectStore(ENTRIES) : tx.objectStore(ENTRIES).index(index)
@@ -101,7 +228,11 @@ export class Database {
 
         if (cursor === null || (limit !== undefined && values.length >= limit)) return resolve()
 
-        values.push((cursor.value as Stored<T>).value)
+        // a deletion the device made, not confirmed yet, is answered by nothing
+        const value = (cursor.value as Stored<T>).value
+
+        if (value !== undefined) values.push(value)
+
         cursor.continue()
       }
     })
@@ -123,7 +254,8 @@ export class Database {
       const id = 'entry' in part ? part.entry.id : part.removed
       const held = (await done(entries.get(id))) as Stored<T> | undefined
 
-      if ('removed' in part) {
+      // a deleted entry a stream brings is one that left, and what the device wrote of it goes too
+      if ('removed' in part || (part.entry.DELETED !== null && part.entry.DELETED !== undefined)) {
         gone.delete(id)
 
         if (held === undefined) continue
@@ -141,10 +273,14 @@ export class Database {
 
       if (left !== undefined) gone.delete(id)
 
-      if (held === undefined || held.value.VERSION < part.entry.VERSION) {
-        entries.put({ id, value: part.entry, g: meta.generation })
-        changes.push({ id, before: held?.value, after: part.entry })
-      } else entries.put({ ...held, g: meta.generation })
+      const server = held === undefined ? undefined : serverOf(held)
+
+      if (server === undefined || server.VERSION < part.entry.VERSION) {
+        const record = settled(held, part.entry, meta.generation)
+
+        entries.put(record)
+        changes.push({ id, before: held?.value, after: record.value })
+      } else entries.put({ ...held!, g: meta.generation })
     }
 
     // what a read that began later did not bring back is gone for it as well
@@ -175,11 +311,15 @@ export class Database {
     const left = (await done(gone.get(entry.id))) as Gone | undefined
     const changes: Array<Change<T>> = []
 
-    if ((left === undefined || later(entry, left)) && (held === undefined || held.value.VERSION < entry.VERSION)) {
+    const server = held === undefined ? undefined : serverOf(held)
+
+    if ((left === undefined || later(entry, left)) && (server === undefined || server.VERSION < entry.VERSION)) {
       if (left !== undefined) gone.delete(entry.id)
 
-      entries.put({ id: entry.id, value: entry, g: Math.max(held?.g ?? 0, generation) })
-      changes.push({ id: entry.id, before: held?.value, after: entry })
+      const record = settled(held, entry, Math.max(held?.g ?? 0, generation))
+
+      entries.put(record)
+      changes.push({ id: entry.id, before: held?.value, after: record.value })
     }
 
     await committed(tx)
@@ -197,7 +337,8 @@ export class Database {
     const entries = tx.objectStore(ENTRIES)
     const gone = tx.objectStore(GONE)
     const held = (await done(entries.get(id))) as Stored<T> | undefined
-    const stale = held !== undefined && version !== undefined && held.value.VERSION >= version
+    const server = held === undefined ? undefined : serverOf(held)
+    const stale = server !== undefined && version !== undefined && server.VERSION >= version
 
     if (!stale) {
       const left: Gone = { id, at: Date.now() }
@@ -214,20 +355,21 @@ export class Database {
     return held === undefined || stale ? [] : [{ id, before: held.value }]
   }
 
-  /** Deletes what a read of the whole collection did not find. */
+  /** Deletes what a read of the whole collection did not find, but what the device wrote and has not pushed. */
   public async sweep<T>(generation: number): Promise<Array<Change<T>>> {
     const tx = this.db.transaction(ENTRIES, 'readwrite')
-    const swept = await sweep<Stored<T>>(tx.objectStore(ENTRIES).index('g'), IDBKeyRange.upperBound(generation, true))
+    const swept = await sweep<Stored<T>>(tx.objectStore(ENTRIES).index('g'), IDBKeyRange.upperBound(generation, true), (stored) => stored.p !== 1)
 
     await committed(tx)
 
     return swept.map((stored) => ({ id: stored.id, before: stored.value }))
   }
 
+  /** Drops the copy, but what the device wrote and has not pushed: that is the device's, not the copy's. */
   public async clear(meta: Meta): Promise<void> {
     const tx = this.db.transaction([ENTRIES, GONE, META], 'readwrite')
 
-    tx.objectStore(ENTRIES).clear()
+    await sweep<Stored<unknown>>(tx.objectStore(ENTRIES), null, (stored) => stored.p !== 1)
     tx.objectStore(GONE).clear()
     tx.objectStore(META).put(meta, KEY)
 
@@ -255,7 +397,7 @@ function later(entry: Comparable, left: Gone): boolean {
   return left.version !== undefined && entry.VERSION > left.version
 }
 
-async function sweep<T>(source: IDBIndex, range: IDBKeyRange): Promise<T[]> {
+async function sweep<T>(source: IDBIndex | IDBObjectStore, range: IDBKeyRange | null, which: (value: T) => boolean = () => true): Promise<T[]> {
   const swept: T[] = []
 
   await new Promise<void>((resolve, reject) => {
@@ -267,13 +409,35 @@ async function sweep<T>(source: IDBIndex, range: IDBKeyRange): Promise<T[]> {
 
       if (cursor === null) return resolve()
 
-      swept.push(cursor.value as T)
-      cursor.delete()
+      if (which(cursor.value as T)) {
+        swept.push(cursor.value as T)
+        cursor.delete()
+      }
+
       cursor.continue()
     }
   })
 
   return swept
+}
+
+/** The server's state of a stored entry: under what is pending, or the entry itself where nothing is */
+function serverOf<T>(stored: Stored<T>): T | undefined {
+  return stored.p === 1 ? stored.server : stored.value
+}
+
+/** The entry as it is answered: the server's state, or a blank where there is none, with what is pending over it */
+function view<T>(id: string, server: T | undefined, pending: Partial<T>): T {
+  return { ...(server ?? ({ VERSION: 0 } as T)), ...pending, id } as T
+}
+
+/** A new state of the server's taken by a stored entry: what is pending stays over it */
+function settled<T>(held: Stored<T> | undefined, server: T, g: number): Stored<T> {
+  if (held?.p !== 1) return { id: (server as { id: string }).id, value: server, g }
+
+  const value = held.removed === true ? undefined : view(held.id, server, held.pending ?? {})
+
+  return { ...held, value, server, g }
 }
 
 function database(name: string): string {
@@ -286,7 +450,6 @@ async function connect(name: string, indexes: Indexes): Promise<IDBDatabase> {
   request.onupgradeneeded = () => {
     const db = request.result
 
-    // a database of the version before has all but what is remembered of the entries that left
     if (!db.objectStoreNames.contains(ENTRIES)) {
       const entries = db.createObjectStore(ENTRIES, { keyPath: 'id' })
 
@@ -298,7 +461,13 @@ async function connect(name: string, indexes: Indexes): Promise<IDBDatabase> {
       db.createObjectStore(META)
     }
 
-    db.createObjectStore(GONE, { keyPath: 'id' }).createIndex('at', 'at')
+    // a database of the versions before has all but what is remembered of the entries that left,
+    // and the index of what the device wrote and has not pushed
+    if (!db.objectStoreNames.contains(GONE)) db.createObjectStore(GONE, { keyPath: 'id' }).createIndex('at', 'at')
+
+    const entries = request.transaction!.objectStore(ENTRIES)
+
+    if (!entries.indexNames.contains('p')) entries.createIndex('p', 'p')
   }
 
   return await done(request)

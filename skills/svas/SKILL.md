@@ -200,3 +200,22 @@ events.on('pots.changed', (event) => pots.apply(net.change(event)))  // an event
 events.on('connected', () => pots.sync())                           // read again only after a gap
 await pots.empty()                 // on registration, before subscribing: [] and no read
 ```
+
+Given `push`, the copy is local-first, written on the device:
+
+```ts
+const nodes = reflection<Node>({
+  name: `nodes:${identity ?? 'local'}`,   // a copy per account, and one without
+  stream: (token) => net.stream(token),
+  push: (changes) => net.merge(changes),   // [{ id, base, set }] → the entries after the merge
+  sync: syncing                            // Readable<boolean>: off, nothing is read or sent
+})
+
+await nodes.write(id, { content: 'Milk' }) // answered at once; pushed once writing pauses, and on `sync`
+await nodes.write(id, null)                // a deletion
+await account.absorb(local)                // another copy's entries, written into this one; that copy is deleted
+```
+
+What was written stays over every state the server streams or tells of until a push answers it;
+`base` is the `VERSION` it was written over, and the server decides what it takes. Queries answer
+from the copy from the start. A failed push is tried again on the next `sync`.
