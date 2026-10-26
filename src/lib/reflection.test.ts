@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { get, writable, type Readable } from 'svelte/store'
-import { reflection, expired, type StreamPart } from './reflection'
+import { reflection, expired, type StreamPart, type Push } from './reflection'
 import type { Maybe } from './Maybe'
 
 interface Pot {
@@ -647,3 +647,228 @@ describe('reflection', () => {
 		expect(fetched).toEqual([])
 	})
 })
+
+describe('a reflection written on the device', () => {
+	let db: string
+
+	beforeEach(() => {
+		db = name()
+		;(globalThis as { window?: unknown }).window = globalThis
+	})
+
+	afterEach(() => {
+		delete (globalThis as { window?: unknown }).window
+	})
+
+	/** A server that merges what is pushed field by field over what it holds, and answers the states. */
+	function merging(held: Record<string, Pot> = {}) {
+		const sent: Array<Array<Push<Pot>>> = []
+		let failing: Error | null = null
+
+		const push = async (changes: Array<Push<Pot>>): Promise<Pot[] | Error> => {
+			sent.push(changes)
+
+			if (failing !== null) return failing
+
+			return changes.map(({ id, set }) => {
+				const before = held[id] ?? { id, VERSION: 0, type: 'green', title: '' }
+				const after: Pot = set === null
+					? { ...before, VERSION: before.VERSION + 1, DELETED: 1 }
+					: { ...before, ...set, id, VERSION: before.VERSION + 1 }
+
+				held[id] = after
+
+				return after
+			})
+		}
+
+		return { push, sent, held, fail: (error: Error | null) => (failing = error) }
+	}
+
+	const empty = () => server({ '': [{ token: 'T1', final: true }], T1: [{ token: 'T2' }], T2: [{ token: 'T3' }] })
+	const titles = (value: Maybe<Pot[]>) => (Array.isArray(value) ? value.map((pot) => `${pot.id}:${pot.title}`) : value)
+
+	it('should answer what is written at once, and exchange nothing while sync is off', async () => {
+		const { stream, asked } = empty()
+		const { push, sent } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, sync: writable(false), delay: 60_000 })
+
+		await pots.write('a', { title: 'mine', type: 'green' })
+
+		expect(titles(await next(pots.query('id')))).toEqual(['a:mine'])
+		expect(await pots.sync()).toBeNull()
+		expect(asked).toEqual([])
+		expect(sent).toEqual([])
+	})
+
+	it('should push what was written with the VERSION it was written over, and take the answer as the state', async () => {
+		const { stream } = empty()
+		const { push, sent } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		await pots.write('a', { title: 'mine' })
+		expect(await pots.sync()).toBeNull()
+
+		expect(sent).toEqual([[{ id: 'a', base: 0, set: { title: 'mine' } }]])
+		expect(await next(pots.get('a'))).toMatchObject({ id: 'a', title: 'mine', VERSION: 1 })
+
+		// nothing is pending any more: a later sync sends nothing
+		expect(await pots.sync()).toBeNull()
+		expect(sent.length).toBe(1)
+	})
+
+	it('should keep what was written over a newer state the server streams or tells of', async () => {
+		const { stream } = server({ '': [{ entry: pot('a', 1, 'green', 'a') }, { token: 'T1', final: true }], T1: [{ token: 'T2' }] })
+		const { push } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, sync: writable(false), delay: 60_000 })
+
+		await pots.write('a', { title: 'mine' })
+		await pots.apply(pot('a', 2, 'blue', 'theirs'))
+
+		expect(await next(pots.get('a'), (value) => value !== null && (value as Pot).type === 'blue')).toMatchObject({ title: 'mine', type: 'blue', VERSION: 2 })
+	})
+
+	it('should take what the server kept, as it answers a push', async () => {
+		const { stream } = empty()
+		const { push, held } = merging({ a: pot('a', 3, 'green', 'theirs') })
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		// a server that keeps its own title answers it
+		const keeping = async (changes: Array<Push<Pot>>) => {
+			await push(changes)
+
+			return [{ ...held.a, title: 'theirs' }]
+		}
+
+		const kept = reflection<Pot>({ name: db, stream, push: keeping, delay: 60_000 })
+
+		await pots.write('a', { title: 'mine' })
+		expect(await kept.sync()).toBeNull()
+		expect(await next(kept.get('a'))).toMatchObject({ title: 'theirs' })
+	})
+
+	it('should hide a deletion at once, and push it', async () => {
+		const { stream } = server({ '': [{ entry: pot('a', 1) }, { entry: pot('b', 1) }, { token: 'T1', final: true }], T1: [{ token: 'T2' }] })
+		const { push, sent } = merging({ a: pot('a', 1), b: pot('b', 1) })
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		expect(ids(await next(pots.query('id'), (value) => Array.isArray(value) && value.length === 2))).toEqual(['a', 'b'])
+
+		await pots.write('a', null)
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+
+		expect(await pots.sync()).toBeNull()
+		expect(sent).toEqual([[{ id: 'a', base: 1, set: null }]])
+		expect(ids(await next(pots.query('id')))).toEqual(['b'])
+	})
+
+	it('should forget an entry the server never had once it is deleted, and push nothing of it', async () => {
+		const { stream } = empty()
+		const { push, sent } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		await pots.write('a', { title: 'draft' })
+		await pots.write('a', null)
+
+		expect(await pots.sync()).toBeNull()
+		expect(sent).toEqual([])
+		expect(ids(await next(pots.query('id')))).toEqual([])
+	})
+
+	it('should keep what was written where a push fails, and send it again', async () => {
+		const { stream } = empty()
+		const { push, sent, fail } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		fail(new Error('offline'))
+		await pots.write('a', { title: 'mine' })
+
+		expect(await pots.sync()).toBeInstanceOf(Error)
+		expect(titles(await next(pots.query('id')))).toEqual(['a:mine'])
+
+		fail(null)
+
+		expect(await pots.sync()).toBeNull()
+		expect(sent.length).toBe(2)
+		expect(await next(pots.get('a'))).toMatchObject({ title: 'mine', VERSION: 1 })
+	})
+
+	it('should tell what waits to be sent, and how the last exchange ended', async () => {
+		const { stream } = empty()
+		const { push, fail } = merging()
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		fail(new Error('offline'))
+		await pots.write('a', { title: 'mine' })
+		await pots.write('b', { title: 'yours' })
+
+		expect(await next(pots.status, (status) => status.pending === 2)).toMatchObject({ synced: null, error: null })
+
+		await pots.sync()
+		expect(await next(pots.status)).toMatchObject({ pending: 2, syncing: false, error: { message: 'offline' } })
+
+		fail(null)
+
+		await pots.sync()
+		expect(await next(pots.status)).toMatchObject({ pending: 0, syncing: false, error: null, synced: expect.any(Number) })
+	})
+
+	it('should keep a write made while a push was on its way, over the state it answered', async () => {
+		const { stream } = empty()
+		const { push: merge } = merging()
+		const device: { pots?: ReturnType<typeof reflection<Pot>> } = {}
+
+		// the device writes again while the server is merging the first push
+		let writing = true
+
+		const push = async (changes: Array<Push<Pot>>) => {
+			if (writing) {
+				writing = false
+				await device.pots?.write('a', { title: 'later' })
+			}
+
+			return await merge(changes)
+		}
+
+		const pots = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		device.pots = pots
+
+		await pots.write('a', { title: 'first' })
+		expect(await pots.sync()).toBeNull()
+
+		expect(await next(pots.get('a'), (value) => value !== null && (value as Pot).title === 'later')).toMatchObject({ title: 'later' })
+	})
+
+	it('should keep what was written when the copy is read again from the start', async () => {
+		const { stream } = server({ '': [{ entry: pot('b', 1) }, { token: 'T1', final: true }], T1: [{ token: 'T2' }] })
+		const pots = reflection<Pot>({ name: db, stream, push: async () => new Error('offline'), delay: 60_000 })
+
+		await pots.write('a', { title: 'mine' })
+		await pots.reset()
+
+		expect(ids(await next(pots.query('id'), (value) => Array.isArray(value) && value.length === 2))).toEqual(['a', 'b'])
+	})
+
+	it('should take the entries of another copy as written, and delete that copy', async () => {
+		const { stream } = empty()
+		const { push, sent } = merging()
+		const local = reflection<Pot>({ name: `${db}-local`, stream, push, sync: writable(false), delay: 60_000 })
+		const account = reflection<Pot>({ name: db, stream, push, delay: 60_000 })
+
+		await local.write('a', { title: 'mine', type: 'green' })
+		await account.absorb(local)
+
+		expect(titles(await next(account.query('id')))).toEqual(['a:mine'])
+		expect(await account.sync()).toBeNull()
+		expect(sent).toEqual([[{ id: 'a', base: 0, set: { title: 'mine', type: 'green' } }]])
+		expect(ids(await next(local.query('id'), (value) => Array.isArray(value)))).toEqual([])
+	})
+
+	it('should refuse a write where it has no push', async () => {
+		const pots = reflection<Pot>({ name: db, stream: async () => expired })
+
+		await expect(pots.write('a', { title: 'x' })).rejects.toThrow(/without `push`/)
+	})
+})
+
